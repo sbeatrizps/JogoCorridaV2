@@ -69,9 +69,9 @@ escolhidas por combinarem com o clima de cada setor.
 
 ARQUIVOS QUE O JOGO GRAVA NO COMPUTADOR
 ---------------------------------------
-%APPDATA%\JogoCorrida\ranking.csv       as 10 melhores corridas
-%APPDATA%\JogoCorrida\ultimo-nome.txt   so para nao ter que redigitar o nome
-%APPDATA%\JogoCorrida\erro.txt          criado so se acontecer algum erro
+ranking.csv                        na raiz do projeto: as 10 melhores corridas
+                                   (vai junto no git, de proposito)
+%APPDATA%\JogoCorrida\erro.txt     criado so se acontecer algum erro
 
 Nada e enviado para a internet.
 

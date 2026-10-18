@@ -156,6 +156,9 @@ namespace JogoCorridaWinFormsApp
             var delta = agora - ultimoQuadroMs;
             ultimoQuadroMs = agora;
 
+            // janela minimizada: nao da para desenhar nem remontar a area de jogo
+            if (ClientSize.Width < 64 || ClientSize.Height < 64) return;
+
             if (jogo.Config.Largura != ClientSize.Width || jogo.Config.Altura != ClientSize.Height)
             {
                 ConfiguraAreaDeJogo();
@@ -212,7 +215,8 @@ namespace JogoCorridaWinFormsApp
             // o modo demonstracao nao entra no ranking
             if (!Demo.Ativo && Ranking.Qualifica(jogo.Pontuacao))
             {
-                nomeDigitado = Ranking.UltimoNome();
+                // comeca em branco: no campeonato cada jogador digita o seu
+                nomeDigitado = "";
                 telaExtra = TelaExtra.DigitandoNome;
             }
         }
@@ -394,7 +398,11 @@ namespace JogoCorridaWinFormsApp
 
         protected override void OnPaint(PaintEventArgs e)
         {
-            if (cena is null) { base.OnPaint(e); return; }
+            if (cena is null || ClientSize.Width < 64 || ClientSize.Height < 64)
+            {
+                base.OnPaint(e);
+                return;
+            }
 
             using (var g = Graphics.FromImage(cena))
             {
@@ -1226,10 +1234,8 @@ namespace JogoCorridaWinFormsApp
                 y += alturaLinha;
             }
 
-            Tema.Texto(g, "ENTER para voltar", fonteMini, Tema.Ciano, meio, cfg.Altura * 0.88f,
+            Tema.Texto(g, "ENTER para voltar", fonteMini, Tema.Ciano, meio, cfg.Altura * 0.90f,
                        StringAlignment.Center);
-            Tema.Texto(g, Ranking.Arquivo, fonteMini, Tema.ComAlfa(Tema.Cinza, 170),
-                       meio, cfg.Altura * 0.93f, StringAlignment.Center);
         }
 
         private void EscureceTela(Graphics g, int alfa)

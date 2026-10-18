@@ -71,22 +71,35 @@ mais rápido. A história explica a mecânica.
 ## Ranking
 
 Ao perder, se a pontuação entrar entre as 10 melhores, o jogo pede o **nome do
-jogador** e grava a corrida num arquivo de texto:
+jogador** e grava a corrida em:
 
 ```
-%APPDATA%\JogoCorrida\ranking.csv
+ranking.csv        <- na raiz do projeto, do lado do README
 ```
 
-Uma linha por jogador, campos separados por ponto e vírgula — abre no Bloco de Notas
-ou no Excel:
+O arquivo fica **dentro do repositório de propósito**: assim o ranking entra no git
+junto com o jogo. Depois do campeonato, basta `git add ranking.csv` e commitar que as
+pontuações viajam com o código.
 
 ```
-nome;pontos;ciclo;setor;data
-SOPHIA;1051;1;1;2026-10-18 13:16
+# POST HUMAN RUN - as 10 melhores corridas
+# nome;pontos;ciclo;setor;data
+CONCURSO;2036;1;2;2026-10-18 17:44
 ```
 
-O caminho aparece embaixo da tela de ranking. Os três primeiros também ficam no
-menu, e o recorde do alto da tela vem dali.
+Abre no Bloco de Notas ou no Excel. As linhas que começam com `#` são comentário.
+Para zerar o ranking, apague as linhas de pontuação e deixe só os comentários.
+
+O jogo acha a raiz sozinho, subindo as pastas a partir do executável até encontrar a
+solução ou o `.git`. Se alguém rodar o jogo solto (pasta publicada, pendrive), o
+`ranking.csv` é criado do lado do `.exe`.
+
+> Se duas pessoas jogarem em cópias diferentes do repositório e as duas commitarem,
+> o git vai acusar conflito no `ranking.csv` — é só juntar as linhas das duas e
+> manter as 10 maiores.
+
+Os três primeiros também ficam no menu, e o recorde do alto da tela vem dali.
+**R** abre o ranking no menu e na tela de fim de jogo.
 
 ---
 

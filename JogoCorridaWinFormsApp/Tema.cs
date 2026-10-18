@@ -74,6 +74,8 @@ namespace JogoCorridaWinFormsApp
         /// <summary>Mancha de luz redonda (halo).</summary>
         public static void Halo(Graphics g, Color cor, float centroX, float centroY, float raio, int alfa = 70)
         {
+            if (raio <= 1) return;   // gradiente em area vazia quebra o GDI+
+
             using var caminho = new GraphicsPath();
             caminho.AddEllipse(centroX - raio, centroY - raio, raio * 2, raio * 2);
 
@@ -123,6 +125,8 @@ namespace JogoCorridaWinFormsApp
         /// <summary>Linhas horizontais de monitor antigo por cima de tudo.</summary>
         public static void Scanlines(Graphics g, int largura, int altura, int alfa = 26)
         {
+            if (largura <= 0 || altura <= 0) return;
+
             using var caneta = new Pen(Color.FromArgb(alfa, 0, 0, 0), 1);
             for (int y = 0; y < altura; y += 3)
             {
@@ -133,6 +137,8 @@ namespace JogoCorridaWinFormsApp
         /// <summary>Cantos escuros, como lente de camera.</summary>
         public static void Vinheta(Graphics g, int largura, int altura, int alfa = 150)
         {
+            if (largura <= 4 || altura <= 4) return;   // janela minimizada
+
             var margem = Math.Max(largura, altura) * 0.42f;
 
             using var caminho = new GraphicsPath();
