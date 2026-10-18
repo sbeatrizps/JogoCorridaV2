@@ -1,12 +1,24 @@
 using System.Runtime.InteropServices;
 using JogoCorrida;
+using System.IO;
 
 namespace JogoCorridaWinFormsApp
 {
+    /// <summary>
+    /// Efeitos sonoros do jogo. Os sons sao gerados por programacao (WAV em memoria),
+    /// entao os efeitos nao dependem de nenhum arquivo de audio externo.
+    /// (A trilha de fundo, essa sim, vem de arquivos MP3 - ver <see cref="Musica"/>.)
+    ///
+    /// A reproducao usa a funcao PlaySound do Windows com o audio ja copiado para
+    /// memoria nao gerenciada. Isso e necessario porque o som toca de forma assincrona:
+    /// se o buffer fosse um vetor comum do .NET, o coletor de lixo poderia move-lo
+    /// enquanto o Windows ainda estivesse lendo.
+    /// </summary>
     internal static class Sons
     {
         private enum Onda { Senoide, Quadrada, Serra, Ruido }
 
+        /// <summary>Um pedaco do efeito: frequencia inicial/final, duracao e volume.</summary>
         private readonly record struct Nota(double Freq, double FreqFinal, double DuracaoMs, double Volume, Onda Forma);
 
         [DllImport("winmm.dll", EntryPoint = "PlaySoundW", CharSet = CharSet.Unicode)]
@@ -19,6 +31,7 @@ namespace JogoCorridaWinFormsApp
 
         private const int TaxaAmostragem = 22050;
 
+        // os buffers ficam alocados ate o jogo fechar - o Windows le direto deles
         private static readonly Dictionary<EventoSom, IntPtr> buffers = [];
         private static readonly Dictionary<EventoSom, double> duracoes = [];
         private static readonly Random rnd = new();
@@ -34,65 +47,104 @@ namespace JogoCorridaWinFormsApp
 
             Registrar(EventoSom.Inicio,
             [
-                new Nota(392, 523, 90, 0.22, Onda.Quadrada),
-                new Nota(659, 784, 140, 0.22, Onda.Quadrada)
+                new Nota(196, 196, 70, 0.22, Onda.Serra),
+                new Nota(294, 392, 120, 0.22, Onda.Quadrada),
+                new Nota(587, 784, 160, 0.20, Onda.Quadrada)
             ]);
 
             Registrar(EventoSom.TrocaFaixa,
             [
-                new Nota(520, 700, 45, 0.10, Onda.Quadrada)
+                new Nota(480, 660, 40, 0.09, Onda.Quadrada)
             ]);
 
-            Registrar(EventoSom.Moeda,
+            Registrar(EventoSom.Lagrima,
             [
-                new Nota(988, 988, 55, 0.22, Onda.Quadrada),
-                new Nota(1319, 1319, 110, 0.22, Onda.Quadrada)
+                new Nota(988, 988, 50, 0.20, Onda.Quadrada),
+                new Nota(1319, 1319, 100, 0.20, Onda.Quadrada)
             ]);
 
             Registrar(EventoSom.ObstaculoSuperado,
             [
-                new Nota(760, 920, 40, 0.09, Onda.Senoide)
+                new Nota(680, 860, 38, 0.08, Onda.Senoide)
+            ]);
+
+            Registrar(EventoSom.PegouPowerUp,
+            [
+                new Nota(523, 523, 60, 0.20, Onda.Quadrada),
+                new Nota(784, 784, 60, 0.20, Onda.Quadrada),
+                new Nota(1047, 1319, 180, 0.20, Onda.Quadrada)
+            ]);
+
+            Registrar(EventoSom.EscudoQuebrado,
+            [
+                new Nota(1, 1, 120, 0.26, Onda.Ruido),
+                new Nota(880, 220, 220, 0.22, Onda.Quadrada)
+            ]);
+
+            Registrar(EventoSom.Miragem,
+            [
+                new Nota(1, 1, 160, 0.18, Onda.Ruido),
+                new Nota(300, 900, 90, 0.14, Onda.Quadrada),
+                new Nota(900, 300, 90, 0.14, Onda.Quadrada)
             ]);
 
             Registrar(EventoSom.Colisao,
             [
                 new Nota(1, 1, 260, 0.40, Onda.Ruido),
-                new Nota(180, 55, 240, 0.32, Onda.Quadrada)
+                new Nota(180, 48, 280, 0.34, Onda.Serra)
             ]);
 
-            Registrar(EventoSom.Derrapagem,
+            Registrar(EventoSom.ChefeEntrou,
             [
-                new Nota(1, 1, 200, 0.16, Onda.Ruido),
-                new Nota(900, 380, 160, 0.14, Onda.Senoide)
+                new Nota(1, 1, 180, 0.26, Onda.Ruido),
+                new Nota(140, 55, 520, 0.34, Onda.Serra),
+                new Nota(70, 70, 260, 0.30, Onda.Quadrada)
             ]);
 
-            Registrar(EventoSom.NovaFase,
+            Registrar(EventoSom.ChefeDerrotado,
             [
-                new Nota(523, 523, 110, 0.22, Onda.Quadrada),
-                new Nota(659, 659, 110, 0.22, Onda.Quadrada),
-                new Nota(784, 784, 110, 0.22, Onda.Quadrada),
-                new Nota(1047, 1047, 220, 0.22, Onda.Quadrada)
+                new Nota(110, 110, 120, 0.28, Onda.Serra),
+                new Nota(1, 1, 140, 0.26, Onda.Ruido),
+                new Nota(392, 523, 130, 0.24, Onda.Quadrada),
+                new Nota(659, 1047, 320, 0.24, Onda.Quadrada)
+            ]);
+
+            Registrar(EventoSom.NovoSetor,
+            [
+                new Nota(523, 523, 100, 0.22, Onda.Quadrada),
+                new Nota(659, 659, 100, 0.22, Onda.Quadrada),
+                new Nota(784, 784, 100, 0.22, Onda.Quadrada),
+                new Nota(1047, 1047, 200, 0.22, Onda.Quadrada)
             ]);
 
             Registrar(EventoSom.GameOver,
             [
-                new Nota(440, 440, 190, 0.26, Onda.Serra),
-                new Nota(392, 392, 190, 0.26, Onda.Serra),
-                new Nota(330, 330, 190, 0.26, Onda.Serra),
-                new Nota(262, 200, 420, 0.26, Onda.Serra)
+                new Nota(392, 392, 200, 0.26, Onda.Serra),
+                new Nota(330, 330, 200, 0.26, Onda.Serra),
+                new Nota(262, 262, 200, 0.26, Onda.Serra),
+                new Nota(196, 140, 480, 0.28, Onda.Serra)
             ]);
 
-            Registrar(EventoSom.Vitoria,
+            Registrar(EventoSom.Fala,
+            [
+                new Nota(620, 760, 26, 0.07, Onda.Quadrada)
+            ]);
+
+            Registrar(EventoSom.NovoCiclo,
             [
                 new Nota(523, 523, 110, 0.24, Onda.Quadrada),
                 new Nota(659, 659, 110, 0.24, Onda.Quadrada),
                 new Nota(784, 784, 110, 0.24, Onda.Quadrada),
                 new Nota(1047, 1047, 160, 0.24, Onda.Quadrada),
                 new Nota(784, 784, 90, 0.24, Onda.Quadrada),
-                new Nota(1047, 1319, 420, 0.24, Onda.Quadrada)
+                new Nota(1047, 1319, 460, 0.24, Onda.Quadrada)
             ]);
         }
 
+        /// <summary>
+        /// Toca o efeito do evento. Como o Windows so reproduz um efeito por vez,
+        /// um som curto (ex.: troca de faixa) nao interrompe um mais importante.
+        /// </summary>
         public static void Tocar(EventoSom evento)
         {
             if (!Ligado || !buffers.TryGetValue(evento, out var buffer)) return;
@@ -100,35 +152,31 @@ namespace JogoCorridaWinFormsApp
             var prioridade = Prioridade(evento);
             if (DateTime.Now < fimDoSomAtual && prioridade < prioridadeAtual) return;
 
-            System.IO.File.AppendAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "sons.txt"), DateTime.Now.ToString("HH:mm:ss.fff") + " antes " + evento + Environment.NewLine);
             try
             {
                 PlaySound(buffer, IntPtr.Zero, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
-                System.IO.File.AppendAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "sons.txt"), DateTime.Now.ToString("HH:mm:ss.fff") + " depois " + evento + Environment.NewLine);
                 prioridadeAtual = prioridade;
                 fimDoSomAtual = DateTime.Now.AddMilliseconds(duracoes[evento]);
             }
             catch
             {
-                Ligado = false; 
+                Ligado = false; // sem placa de som: o jogo continua normalmente
             }
         }
 
+        /// <summary>Interrompe qualquer efeito em reproducao (usado ao fechar o jogo).</summary>
         public static void Parar()
         {
-            try
-            {
-                PlaySound(IntPtr.Zero, IntPtr.Zero, SND_PURGE);
-            }
-            catch
-            {
-            }
+            try { PlaySound(IntPtr.Zero, IntPtr.Zero, SND_PURGE); } catch { }
         }
 
         private static int Prioridade(EventoSom evento) => evento switch
         {
-            EventoSom.Colisao or EventoSom.GameOver or EventoSom.Vitoria or EventoSom.NovaFase => 3,
-            EventoSom.Moeda or EventoSom.Derrapagem or EventoSom.Inicio => 2,
+            EventoSom.ChefeEntrou or EventoSom.ChefeDerrotado or EventoSom.GameOver
+                or EventoSom.NovoCiclo or EventoSom.NovoSetor or EventoSom.Colisao => 4,
+            EventoSom.EscudoQuebrado or EventoSom.PegouPowerUp => 3,
+            EventoSom.Lagrima or EventoSom.Miragem or EventoSom.Inicio => 2,
+            EventoSom.Fala => 1,
             EventoSom.TrocaFaixa => 1,
             _ => 0
         };
@@ -143,6 +191,7 @@ namespace JogoCorridaWinFormsApp
             duracoes[evento] = notas.Sum(n => n.DuracaoMs);
         }
 
+        /// <summary>Monta um arquivo WAV (PCM 16 bits, mono) com as notas informadas.</summary>
         private static byte[] GerarWav(Nota[] notas)
         {
             var amostras = new List<short>();
@@ -162,13 +211,13 @@ namespace JogoCorridaWinFormsApp
             escritor.Write(36 + dados.Length);
             escritor.Write("WAVE"u8.ToArray());
             escritor.Write("fmt "u8.ToArray());
-            escritor.Write(16);                      
-            escritor.Write((short)1);            
-            escritor.Write((short)1);        
+            escritor.Write(16);                       // tamanho do bloco fmt
+            escritor.Write((short)1);                 // PCM
+            escritor.Write((short)1);                 // mono
             escritor.Write(TaxaAmostragem);
-            escritor.Write(TaxaAmostragem * 2);   
-            escritor.Write((short)2);    
-            escritor.Write((short)16);        
+            escritor.Write(TaxaAmostragem * 2);       // bytes por segundo
+            escritor.Write((short)2);                 // alinhamento
+            escritor.Write((short)16);                // bits por amostra
             escritor.Write("data"u8.ToArray());
             escritor.Write(dados.Length);
             escritor.Write(dados);
@@ -200,6 +249,7 @@ namespace JogoCorridaWinFormsApp
             }
         }
 
+        /// <summary>Sobe rapido e desce no final, para o som nao estalar.</summary>
         private static double Envelope(double avanco)
         {
             const double ataque = 0.03;

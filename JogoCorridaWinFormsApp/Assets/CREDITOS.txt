@@ -1,0 +1,82 @@
+CREDITOS E DIREITOS
+===================
+
+SOBRE O JOGO
+------------
+POST HUMAN RUN e um jogo de fa (fan game), sem fins lucrativos, feito como
+trabalho academico no IFSP.
+
+A historia, os personagens e os lugares vem do universo do album
+"POST HUMAN: NeX GEn", do Bring Me the Horizon: Selene (NYX-01), Sof, M8,
+Victor Carmine, Skys, E.V.E., a Nex Gen, o culto Mantra, New Elysium,
+October Palace, Novosovia, Youtopia, o virus VSPR-37 e os quatro Insights
+(Conexao/Raphael, Empatia/Gabriel, Proposito/Michael, Visao/Uriel).
+
+O que NAO foi usado, de proposito:
+  - nenhuma arte oficial do album, da banda ou do encarte;
+  - nenhum logotipo da banda ou da gravadora;
+  - nenhum trecho de letra de musica;
+  - nenhuma gravacao das musicas da banda.
+
+Tudo que aparece na tela foi feito para este trabalho (ver abaixo), e os
+dialogos sao texto original escrito para o jogo, nao citacoes.
+
+Bring Me the Horizon e os detentores dos direitos do album nao tem nenhuma
+ligacao com este trabalho e nao o patrocinam.
+
+
+PERSONAGENS (pixel art)
+-----------------------
+Todos os sprites sao ORIGINAIS, desenhados pixel a pixel no proprio codigo,
+no arquivo JogoCorridaWinFormsApp/PixelArt.cs. Nao ha imagem de terceiros no
+jogo. Cada desenho e um mapa de letras (cada letra = uma cor da paleta), o que
+deixa facil editar: e so trocar as letras.
+
+  selene     Selene (NYX-01), a jogadora
+  m8         M8, o navegador multidimensional
+  agente     agente da Nex Gen        (inimigo do setor 1)
+  neosage    seguidor do culto Mantra (inimigo do setor 2)
+  angeldust  o anjo podre             (inimigo do setor 3)
+  pesado     inimigo grande
+  drone      inimigo rapido
+  barreira   bloqueio baixo
+  miragem    campo que inverte os controles
+  lagrima    Lagrima do Guardiao (o item que vale pontos)
+  carmine    Victor Carmine  (chefe do setor 1)
+  skys       Skys            (chefe do setor 2)
+  eve        E.V.E.          (chefe do setor 3)
+  empatia / proposito / conexao / visao   os quatro Insights
+
+
+MUSICAS
+-------
+Licenca: CC0 1.0 Universal (dominio publico) - todas
+Fonte:   opengameart.org
+
+  invaderloop.mp3  "Invaderloop"  por symphony
+                   https://opengameart.org/content/invaderloop
+                   (o autor pede, por gentileza, que o nome dele seja citado)
+
+  bilwe.mp3        "Bilwe"        por James Gargette (cinameng)
+                   https://opengameart.org/content/bilwe
+
+  hardwar.mp3      "Hardwar"      por James Gargette (cinameng)
+                   https://opengameart.org/content/hardwar
+
+Nao sao musicas do Bring Me the Horizon: sao faixas de dominio publico
+escolhidas por combinarem com o clima de cada setor.
+
+
+ARQUIVOS QUE O JOGO GRAVA NO COMPUTADOR
+---------------------------------------
+%APPDATA%\JogoCorrida\ranking.csv       as 10 melhores corridas
+%APPDATA%\JogoCorrida\ultimo-nome.txt   so para nao ter que redigitar o nome
+%APPDATA%\JogoCorrida\erro.txt          criado so se acontecer algum erro
+
+Nada e enviado para a internet.
+
+
+EFEITOS SONOROS
+---------------
+Gerados por programacao (sintetizados) em JogoCorridaWinFormsApp/Sons.cs.
+Nao ha arquivo de audio de terceiros para os efeitos.

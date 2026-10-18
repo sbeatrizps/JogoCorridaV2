@@ -1,36 +1,46 @@
-﻿using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
+using System.IO;
 using JogoCorrida;
 
 namespace JogoCorridaWinFormsApp
 {
+    /// <summary>
+    /// Interface do jogo. A cena e desenhada primeiro em uma imagem na memoria e
+    /// depois jogada na tela em fatias - e assim que sai o efeito de glitch.
+    /// As regras ficam todas na classe <see cref="Jogo"/>; aqui so tem apresentacao.
+    /// </summary>
     public partial class FormJogoCorrida : Form
     {
         private readonly Jogo jogo = new();
         private readonly Efeitos efeitos = new();
+        private readonly Tutorial tutorial = new();
         private readonly Stopwatch relogio = Stopwatch.StartNew();
         private readonly HashSet<Keys> teclasPressionadas = [];
         private readonly Random rnd = new();
 
         private double ultimoQuadroMs;
 
-        private Image? imgCarro;
-        private Image? imgObstaculo;
-        private Image? imgLogo;
+        /// <summary>Telas que aparecem por cima do jogo, fora dos estados do motor.</summary>
+        private enum TelaExtra { Nenhuma, DigitandoNome, Ranking }
+        private TelaExtra telaExtra = TelaExtra.Nenhuma;
+        private string nomeDigitado = "";
+        private int posicaoConquistada;
+        private double proximoGlitchMs;
+        private double fimDoGlitchMs;
+
+        private Bitmap? cena;            // onde o mundo e desenhado antes de ir para a tela
+        private Bitmap? sobreposicao;    // scanlines + vinheta, prontas (nao mudam por quadro)
 
         private Font fonteTitulo = null!;
         private Font fonteGrande = null!;
         private Font fonteMedia = null!;
-        private Font fontePequena = null!;
+        private Font fonteFala = null!;
         private Font fonteMini = null!;
+        private Font fonteHud = null!;
 
-        private const float AlturaPainel = 78f;
-
-        private static readonly string ArquivoRecorde = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "JogoCorrida", "recorde.txt");
+        private const float AlturaPainel = 92f;
 
         public FormJogoCorrida()
         {
@@ -42,11 +52,10 @@ namespace JogoCorridaWinFormsApp
             UpdateStyles();
 
             CriaFontes();
-            CarregaImagens();
             Sons.Inicializar();
 
-            jogo.Som += Sons.Tocar;
-            jogo.MelhorPontuacao = CarregaRecorde();
+            jogo.Som += AoTocarSom;
+            jogo.MelhorPontuacao = Ranking.Recorde;
         }
 
         protected override void OnLoad(EventArgs e)
@@ -55,64 +64,91 @@ namespace JogoCorridaWinFormsApp
 
             ConfiguraAreaDeJogo();
             jogo.IniciaJogo();
+            tutorial.Reiniciar();
+            Musica.Tocar(jogo.FaseAtual.Musica);
 
             ultimoQuadroMs = relogio.Elapsed.TotalMilliseconds;
             timerJogo.Enabled = true;
         }
 
+        // =====================================================================
+        // PREPARACAO
+        // =====================================================================
+
+        /// <summary>Ajusta as medidas do jogo ao tamanho real da janela.</summary>
         private void ConfiguraAreaDeJogo()
         {
             var cfg = jogo.Config;
             cfg.Largura = ClientSize.Width;
             cfg.Altura = ClientSize.Height;
             cfg.QtdFaixas = 3;
-            cfg.MargemPista = (int)(cfg.Largura * 0.09);
+            cfg.MargemPista = (int)(cfg.Largura * 0.10);
 
             var faixa = cfg.LarguraFaixa;
-            cfg.LarguraCarro = (int)(faixa * 0.8);
-            cfg.AlturaCarro = (int)(cfg.LarguraCarro * 1.3);
-            cfg.LarguraMoeda = cfg.AlturaMoeda = (int)(faixa * 0.36);
-            cfg.RecuoCarro = (int)(cfg.Altura * 0.15);
-            cfg.VelocidadeLateral = faixa * 5.5;
-            cfg.FolgaColisao = cfg.LarguraCarro * 0.14;
+            cfg.LarguraJogador = (int)(faixa * 0.56);
+            // a altura acompanha a proporcao do desenho de Selene, para nao distorcer
+            cfg.AlturaJogador = (int)(cfg.LarguraJogador * PixelArt.Proporcao("selene"));
+            cfg.LarguraLagrima = cfg.AlturaLagrima = (int)(faixa * 0.34);
+            cfg.LarguraPowerUp = cfg.AlturaPowerUp = (int)(faixa * 0.42);
+            cfg.RecuoJogador = (int)(cfg.Altura * 0.13);
+            cfg.VelocidadeLateral = faixa * 7.0;
+            cfg.FolgaColisao = cfg.LarguraJogador * 0.18;
+
+            PreparaImagens();
+        }
+
+        private void PreparaImagens()
+        {
+            cena?.Dispose();
+            sobreposicao?.Dispose();
+
+            cena = new Bitmap(Math.Max(1, ClientSize.Width), Math.Max(1, ClientSize.Height));
+            sobreposicao = MontaSobreposicao(ClientSize.Width, ClientSize.Height);
+        }
+
+        /// <summary>Scanlines e vinheta sao sempre iguais, entao ficam prontas em uma imagem.</summary>
+        private static Bitmap MontaSobreposicao(int largura, int altura)
+        {
+            var imagem = new Bitmap(Math.Max(1, largura), Math.Max(1, altura));
+            using var g = Graphics.FromImage(imagem);
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            Tema.Vinheta(g, largura, altura, 165);
+            Tema.Scanlines(g, largura, altura, 30);
+
+            return imagem;
         }
 
         private void CriaFontes()
         {
-            fonteTitulo = new Font("Segoe UI", 30F, FontStyle.Bold);
-            fonteGrande = new Font("Segoe UI", 19F, FontStyle.Bold);
-            fonteMedia = new Font("Segoe UI", 13F, FontStyle.Bold);
-            fontePequena = new Font("Segoe UI", 10F, FontStyle.Bold);
-            fonteMini = new Font("Segoe UI", 8F, FontStyle.Bold);
-        }
-
-        private void CarregaImagens()
-        {
-            imgCarro = Properties.Resources._3767626_carro_com_vista_de_cima_gratis_vetor;
-            imgObstaculo = Properties.Resources.depositphotos_357517002_stock_illustration_car_top_view_cute_cartoon;
-
-            try
-            {
-                var recursos = new ComponentResourceManager(typeof(FormJogoCorrida));
-                imgLogo = recursos.GetObject("picIFSP.BackgroundImage") as Image;
-            }
-            catch
-            {
-                imgLogo = null; 
-            }
+            fonteTitulo = new Font("Impact", 38F, FontStyle.Regular);
+            fonteGrande = new Font("Consolas", 21F, FontStyle.Bold);
+            fonteMedia = new Font("Segoe UI", 12F, FontStyle.Bold);
+            fonteFala = new Font("Consolas", 11.5F, FontStyle.Bold);
+            fonteMini = new Font("Consolas", 8.5F, FontStyle.Bold);
+            fonteHud = new Font("Consolas", 11F, FontStyle.Bold);
         }
 
         private void LiberarRecursos()
         {
-            imgCarro?.Dispose();
-            imgObstaculo?.Dispose();
-            imgLogo?.Dispose();
+            Musica.Parar();
+            Sons.Parar();
+            PixelArt.Liberar();
+
+            cena?.Dispose();
+            sobreposicao?.Dispose();
+
             fonteTitulo?.Dispose();
             fonteGrande?.Dispose();
             fonteMedia?.Dispose();
-            fontePequena?.Dispose();
+            fonteFala?.Dispose();
             fonteMini?.Dispose();
+            fonteHud?.Dispose();
         }
+
+        // =====================================================================
+        // LACO PRINCIPAL
+        // =====================================================================
 
         private void timerJogo_Tick(object? sender, EventArgs e)
         {
@@ -124,41 +160,130 @@ namespace JogoCorridaWinFormsApp
             {
                 ConfiguraAreaDeJogo();
                 jogo.IniciaJogo();
+                tutorial.Reiniciar();
                 efeitos.Limpar();
             }
 
+            Demo.Jogar(jogo, delta);
+
             var estadoAnterior = jogo.Estado;
-            var moedasAnteriores = jogo.Moedas;
+            var setorAnterior = jogo.NumeroSetor;
+            var lagrimasAnteriores = jogo.Lagrimas;
 
             jogo.Atualizar(delta);
             efeitos.Atualizar(delta);
+            tutorial.Observar(jogo);
+            tutorial.Atualizar(delta, jogo.Estado == EstadoJogo.Jogando);
+            Musica.Atualizar();
 
-            if (jogo.Moedas > moedasAnteriores)
+            if (jogo.Lagrimas > lagrimasAnteriores)
             {
-                efeitos.Texto((float)jogo.Carro.CentroX, (float)jogo.Carro.PosicaoY - 10,
-                              $"+{jogo.Config.PontosPorMoeda}", Color.Gold);
+                efeitos.Texto((float)jogo.Jogador.CentroX, (float)jogo.Jogador.PosicaoY - 12,
+                              $"+{jogo.Config.PontosPorLagrima * jogo.Multiplicador}", Tema.Ciano);
             }
 
+            if (jogo.NumeroSetor != setorAnterior) Musica.Tocar(jogo.FaseAtual.Musica);
+
+            // efeito visual da batida
             if (estadoAnterior != EstadoJogo.Colidindo && jogo.Estado == EstadoJogo.Colidindo)
             {
                 var atingido = jogo.ElementoAtingido;
-                var x = atingido is null ? jogo.Carro.CentroX : (atingido.CentroX + jogo.Carro.CentroX) / 2;
-                var y = atingido is null ? jogo.Carro.CentroY : (atingido.CentroY + jogo.Carro.PosicaoY) / 2;
-                efeitos.Explosao((float)x, (float)y, jogo.Config.LarguraCarro / 46f);
+                var x = atingido is null ? jogo.Jogador.CentroX : (atingido.CentroX + jogo.Jogador.CentroX) / 2;
+                var y = atingido is null ? jogo.Jogador.CentroY : (atingido.CentroY + jogo.Jogador.PosicaoY) / 2;
+                efeitos.Explosao((float)x, (float)y, jogo.Config.LarguraJogador / 46f);
             }
 
             if (estadoAnterior != jogo.Estado && jogo.VerificaFimJogo())
             {
-                SalvaRecorde(jogo.MelhorPontuacao);
+                AoPerder();
+            }
+            if (estadoAnterior == EstadoJogo.GameOver && jogo.Estado != EstadoJogo.GameOver)
+            {
+                tutorial.Reiniciar();
             }
 
+            AtualizaGlitch(agora);
             Invalidate();
         }
 
+        /// <summary>No game over, pede o nome se a pontuacao entrou no ranking.</summary>
+        private void AoPerder()
+        {
+            // o modo demonstracao nao entra no ranking
+            if (!Demo.Ativo && Ranking.Qualifica(jogo.Pontuacao))
+            {
+                nomeDigitado = Ranking.UltimoNome();
+                telaExtra = TelaExtra.DigitandoNome;
+            }
+        }
+
+        private void ConfirmaNome()
+        {
+            posicaoConquistada = Ranking.Registrar(nomeDigitado, jogo.Pontuacao, jogo.Ciclo, jogo.NumeroSetor);
+            jogo.MelhorPontuacao = Ranking.Recorde;
+            telaExtra = TelaExtra.Ranking;
+        }
+
+        private void AtualizaGlitch(double agora)
+        {
+            if (agora < proximoGlitchMs) return;
+            fimDoGlitchMs = agora + rnd.Next(70, 220);
+            proximoGlitchMs = agora + rnd.Next(1800, 5200);
+        }
+
+        /// <summary>Intensidade atual do glitch (0 a 1).</summary>
+        private float ForcaDoGlitch()
+        {
+            var agora = relogio.Elapsed.TotalMilliseconds;
+            var forca = 0f;
+
+            if (agora < fimDoGlitchMs) forca = 0.45f;
+            if (jogo.ChefeAtivo) forca = Math.Max(forca, 0.22f);
+            if (jogo.ControlesInvertidos) forca = Math.Max(forca, 0.55f);
+            if (jogo.Estado == EstadoJogo.Colidindo) forca = Math.Max(forca, (float)jogo.IntensidadeExplosao);
+            if (jogo.Estado == EstadoJogo.TrocandoSetor) forca = Math.Max(forca, 0.35f);
+
+            return forca;
+        }
+
+        private void AoTocarSom(EventoSom evento)
+        {
+            Sons.Tocar(evento);
+
+            if (evento is EventoSom.ChefeEntrou or EventoSom.ChefeDerrotado or EventoSom.NovoCiclo)
+            {
+                fimDoGlitchMs = relogio.Elapsed.TotalMilliseconds + 500;
+            }
+        }
+
+        // =====================================================================
+        // TECLADO
+        // =====================================================================
 
         private void FormJogoCorrida_KeyDown(object sender, KeyEventArgs e)
         {
             var repetida = !teclasPressionadas.Add(e.KeyCode);
+
+            // enquanto digita o nome, o teclado e todo da caixa de texto
+            if (telaExtra == TelaExtra.DigitandoNome)
+            {
+                if (!repetida) DigitaNome(e.KeyCode);
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                return;
+            }
+
+            if (telaExtra == TelaExtra.Ranking)
+            {
+                if (!repetida && e.KeyCode is Keys.Enter or Keys.Space or Keys.Escape or Keys.R)
+                {
+                    telaExtra = TelaExtra.Nenhuma;
+                    posicaoConquistada = 0;
+                }
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                return;
+            }
 
             if (!repetida)
             {
@@ -176,20 +301,43 @@ namespace JogoCorridaWinFormsApp
 
                     case Keys.Enter:
                     case Keys.Space:
-                        efeitos.Limpar();
+                        if (jogo.Estado == EstadoJogo.GameOver) { efeitos.Limpar(); tutorial.Reiniciar(); }
                         jogo.Confirmar();
+                        if (jogo.Estado == EstadoJogo.Jogando) Musica.Retomar();
                         break;
 
                     case Keys.P:
                         jogo.AlternarPausa();
+                        if (jogo.Estado == EstadoJogo.Pausado) Musica.Pausar(); else Musica.Retomar();
                         break;
 
                     case Keys.M:
                         Sons.Ligado = !Sons.Ligado;
+                        Musica.Alternar(Sons.Ligado);
+                        break;
+
+                    case Keys.F2:
+                        Demo.Alternar();
+                        break;
+
+                    case Keys.R:
+                        // o ranking pode ser visto no menu e na tela de fim de jogo
+                        if (jogo.Estado is EstadoJogo.Menu or EstadoJogo.GameOver)
+                        {
+                            telaExtra = TelaExtra.Ranking;
+                        }
                         break;
 
                     case Keys.Escape:
-                        if (jogo.Estado == EstadoJogo.Jogando) jogo.AlternarPausa();
+                        if (jogo.Estado == EstadoJogo.Dialogo)
+                        {
+                            jogo.PularDialogo();
+                        }
+                        else if (jogo.Estado == EstadoJogo.Jogando)
+                        {
+                            jogo.AlternarPausa();
+                            Musica.Pausar();
+                        }
                         else Close();
                         break;
                 }
@@ -199,42 +347,118 @@ namespace JogoCorridaWinFormsApp
             e.SuppressKeyPress = true;
         }
 
-        private void FormJogoCorrida_KeyUp(object sender, KeyEventArgs e)
+        /// <summary>Monta o nome do jogador letra por letra.</summary>
+        private void DigitaNome(Keys tecla)
         {
-            teclasPressionadas.Remove(e.KeyCode);
+            if (tecla == Keys.Enter)
+            {
+                ConfirmaNome();
+                return;
+            }
+
+            if (tecla == Keys.Back)
+            {
+                if (nomeDigitado.Length > 0) nomeDigitado = nomeDigitado[..^1];
+                return;
+            }
+
+            if (nomeDigitado.Length >= Ranking.TamanhoMaximoDoNome) return;
+
+            char? letra = tecla switch
+            {
+                >= Keys.A and <= Keys.Z => (char)('A' + (tecla - Keys.A)),
+                >= Keys.D0 and <= Keys.D9 => (char)('0' + (tecla - Keys.D0)),
+                >= Keys.NumPad0 and <= Keys.NumPad9 => (char)('0' + (tecla - Keys.NumPad0)),
+                Keys.Space => ' ',
+                Keys.OemMinus or Keys.Subtract => '-',
+                _ => null
+            };
+
+            if (letra.HasValue) nomeDigitado += letra.Value;
         }
+
+        private void FormJogoCorrida_KeyUp(object sender, KeyEventArgs e)
+            => teclasPressionadas.Remove(e.KeyCode);
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            System.IO.File.AppendAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "sons.txt"), "FECHANDO motivo=" + e.CloseReason + " estado=" + jogo.Estado + Environment.NewLine + Environment.StackTrace + Environment.NewLine);
             timerJogo.Enabled = false;
+            Musica.Parar();
             Sons.Parar();
-            SalvaRecorde(jogo.MelhorPontuacao);
             base.OnFormClosing(e);
         }
 
+        // =====================================================================
+        // DESENHO
+        // =====================================================================
+
         protected override void OnPaint(PaintEventArgs e)
         {
-            var g = e.Graphics;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-            g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
+            if (cena is null) { base.OnPaint(e); return; }
 
-            var estadoGraficos = g.Save();
-            AplicaTremorDaBatida(g);
+            using (var g = Graphics.FromImage(cena))
+            {
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
 
-            DesenhaCenario(g);
-            DesenhaElementos(g);
-            DesenhaCarroDoJogador(g);
-            if (jogo.FaseAtual.Noite) DesenhaNoite(g);
-            efeitos.Desenhar(g, fonteMedia);
-            DesenhaClaraoDaBatida(g);
+                var estado = g.Save();
+                AplicaTremorDaBatida(g);
 
-            g.Restore(estadoGraficos);
+                DesenhaFundo(g);
+                DesenhaPista(g);
+                DesenhaElementos(g);
+                DesenhaChefe(g);
+                DesenhaJogador(g);
+                tutorial.Desenhar(g, jogo, fonteMini);
+                tutorial.DesenhaDicaInicial(g, jogo, fonteMini);
+                efeitos.Desenhar(g, fonteMedia);
+                DesenhaClaraoDaBatida(g);
 
-            DesenhaPainel(g);
-            DesenhaAvisos(g);
+                g.Restore(estado);
+            }
+
+            var tela = e.Graphics;
+            tela.SmoothingMode = SmoothingMode.AntiAlias;
+            tela.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
+
+            DesenhaCenaNaTela(tela);
+            if (sobreposicao is not null) tela.DrawImage(sobreposicao, 0, 0);
+            Tema.Ruido(tela, rnd, ClientSize.Width, ClientSize.Height, 60, 26);
+
+            DesenhaPainel(tela);
+            DesenhaAvisos(tela);
+        }
+
+        private void DesenhaCenaNaTela(Graphics tela)
+        {
+            if (cena is null) return;
+
+            var forca = ForcaDoGlitch();
+            if (forca <= 0.01f)
+            {
+                tela.DrawImage(cena, 0, 0);
+                return;
+            }
+
+            var fatias = 16;
+            var alturaFatia = (float)ClientSize.Height / fatias;
+
+            for (int i = 0; i < fatias; i++)
+            {
+                var origem = new RectangleF(0, i * alturaFatia, ClientSize.Width, alturaFatia + 1);
+                var desvio = rnd.NextDouble() < 0.45
+                    ? (float)((rnd.NextDouble() * 2 - 1) * 22 * forca)
+                    : 0f;
+
+                var destino = new RectangleF(desvio, i * alturaFatia, ClientSize.Width, alturaFatia + 1);
+                tela.DrawImage(cena, destino, origem, GraphicsUnit.Pixel);
+            }
+
+            using var rosa = new SolidBrush(Tema.ComAlfa(Tema.Rosa, (int)(40 * forca)));
+            using var ciano = new SolidBrush(Tema.ComAlfa(Tema.Ciano, (int)(40 * forca)));
+            tela.FillRectangle(rosa, -6 * forca, 0, ClientSize.Width, ClientSize.Height);
+            tela.FillRectangle(ciano, 6 * forca, 0, ClientSize.Width, ClientSize.Height);
         }
 
         private void AplicaTremorDaBatida(Graphics g)
@@ -246,282 +470,197 @@ namespace JogoCorridaWinFormsApp
                                  (float)(rnd.NextDouble() * 2 - 1) * forca);
         }
 
-        private void DesenhaCenario(Graphics g)
+        // ---------------------------------------------------------------------
+        // CENARIO
+        // ---------------------------------------------------------------------
+
+        private void DesenhaFundo(Graphics g)
         {
             var cfg = jogo.Config;
-            var fase = jogo.FaseAtual;
+            var neon = Tema.De(jogo.FaseAtual.CorNeon);
 
-            using (var grama = new SolidBrush(Cor(fase.CorGrama)))
+            using (var fundo = new SolidBrush(Tema.De(jogo.FaseAtual.CorFundo)))
             {
-                g.FillRectangle(grama, -40, -40,
+                g.FillRectangle(fundo, -40, -40,
                                 Math.Max(cfg.Largura, ClientSize.Width) + 80,
                                 Math.Max(cfg.Altura, ClientSize.Height) + 80);
             }
 
-            using (var asfalto = new SolidBrush(Cor(fase.CorAsfalto)))
+            var periodo = cfg.Altura * 0.085f;
+            var deslocamento = (float)(jogo.DistanciaPercorrida % periodo);
+
+            using (var caneta = new Pen(Tema.ComAlfa(neon, 34), 1))
+            {
+                for (var y = -periodo + deslocamento; y < cfg.Altura + periodo; y += periodo)
+                {
+                    g.DrawLine(caneta, 0, y, cfg.MargemPista, y);
+                    g.DrawLine(caneta, cfg.Largura - cfg.MargemPista, y, cfg.Largura, y);
+                }
+                for (float x = 0; x <= cfg.MargemPista; x += cfg.MargemPista / 3f)
+                {
+                    g.DrawLine(caneta, x, 0, x, cfg.Altura);
+                    g.DrawLine(caneta, cfg.Largura - x, 0, cfg.Largura - x, cfg.Altura);
+                }
+            }
+
+            Tema.Halo(g, neon, cfg.Largura / 2f, 0, cfg.Largura * 0.75f, 48);
+        }
+
+        private void DesenhaPista(Graphics g)
+        {
+            var cfg = jogo.Config;
+            var neon = Tema.De(jogo.FaseAtual.CorNeon);
+
+            using (var asfalto = new SolidBrush(Tema.De(jogo.FaseAtual.CorPista)))
             {
                 g.FillRectangle(asfalto, cfg.MargemPista, -40, cfg.LarguraPista, cfg.Altura + 80);
             }
 
-            DesenhaPaisagem(g);
+            Tema.LinhaNeon(g, neon, cfg.MargemPista, -40, cfg.MargemPista, cfg.Altura + 40, 2.5f);
+            Tema.LinhaNeon(g, neon, cfg.MargemPista + cfg.LarguraPista, -40,
+                           cfg.MargemPista + cfg.LarguraPista, cfg.Altura + 40, 2.5f);
 
-            using (var borda = new Pen(Color.FromArgb(220, 245, 245, 245), 4))
-            {
-                g.DrawLine(borda, cfg.MargemPista + 3, -40, cfg.MargemPista + 3, cfg.Altura + 40);
-                g.DrawLine(borda, cfg.MargemPista + cfg.LarguraPista - 3, -40,
-                                  cfg.MargemPista + cfg.LarguraPista - 3, cfg.Altura + 40);
-            }
-
-            var comprimento = cfg.Altura * 0.055f;
-            var vao = comprimento * 0.85f;
+            var comprimento = cfg.Altura * 0.05f;
+            var vao = comprimento * 1.1f;
             var periodo = comprimento + vao;
             var deslocamento = (float)(jogo.DistanciaPercorrida % periodo);
 
-            using var pincelFaixa = new SolidBrush(Cor(fase.CorFaixa));
-            for (int i = 1; i < cfg.QtdFaixas; i++)
+            using (var pincel = new SolidBrush(Tema.ComAlfa(Tema.Branco, 150)))
             {
-                var x = cfg.MargemPista + cfg.LarguraFaixa * i;
-                for (var y = -periodo + deslocamento; y < cfg.Altura + periodo; y += periodo)
+                for (int i = 1; i < cfg.QtdFaixas; i++)
                 {
-                    g.FillRectangle(pincelFaixa, x - 3, y, 6, comprimento);
+                    var x = cfg.MargemPista + cfg.LarguraFaixa * i;
+                    for (var y = -periodo + deslocamento; y < cfg.Altura + periodo; y += periodo)
+                    {
+                        g.FillRectangle(pincel, x - 2, y, 4, comprimento);
+                    }
                 }
             }
+
+            DesenhaMarcasDoAsfalto(g);
         }
 
-        private void DesenhaPaisagem(Graphics g)
+        /// <summary>Setas pintadas no chao - nao afetam o jogo, so dao sensacao de velocidade.</summary>
+        private void DesenhaMarcasDoAsfalto(Graphics g)
         {
             var cfg = jogo.Config;
-            var fase = jogo.FaseAtual;
-
-            var periodo = cfg.Altura * 0.34f;
+            var neon = Tema.De(jogo.FaseAtual.CorNeon);
+            var periodo = cfg.Altura * 0.42f;
             var deslocamento = (float)(jogo.DistanciaPercorrida % periodo);
-            var larguraMargem = cfg.MargemPista;
+            var indice = (int)(jogo.DistanciaPercorrida / periodo);
 
-            using var poste = new SolidBrush(Color.FromArgb(210, 60, 60, 68));
-            using var lampada = new SolidBrush(fase.Noite ? Color.FromArgb(235, 255, 236, 160)
-                                                          : Color.FromArgb(200, 220, 220, 225));
-            using var mato = new SolidBrush(Color.FromArgb(80, 0, 0, 0));
+            using var caneta = new Pen(Tema.ComAlfa(neon, 38), 3f);
+            var tamanho = cfg.LarguraFaixa * 0.22f;
 
-            var indice = 0;
             for (var y = -periodo + deslocamento; y < cfg.Altura + periodo; y += periodo)
             {
-                var esquerda = indice % 2 == 0;
-                var x = esquerda ? larguraMargem * 0.45f : cfg.Largura - larguraMargem * 0.45f;
+                var faixa = Math.Abs(indice + (int)(y / periodo)) % cfg.QtdFaixas;
+                var centro = (float)cfg.CentroFaixa(faixa);
 
-                g.FillRectangle(poste, x - 3, y, 6, cfg.Altura * 0.075f);
-                g.FillEllipse(lampada, x - 8, y - 7, 16, 12);
-
-                if (fase.Noite)
+                for (int i = 0; i < 3; i++)
                 {
-                    using var brilho = new SolidBrush(Color.FromArgb(45, 255, 236, 160));
-                    g.FillEllipse(brilho, x - 26, y - 24, 52, 46);
+                    var altura = y + i * tamanho * 0.9f;
+                    g.DrawLine(caneta, centro - tamanho, altura + tamanho * 0.7f, centro, altura);
+                    g.DrawLine(caneta, centro, altura, centro + tamanho, altura + tamanho * 0.7f);
                 }
-
-                var xArbusto = esquerda ? cfg.Largura - larguraMargem * 0.5f : larguraMargem * 0.5f;
-                g.FillEllipse(mato, xArbusto - 12, y + periodo * 0.45f, 24, 16);
-
-                indice++;
             }
         }
+
+        // ---------------------------------------------------------------------
+        // ELEMENTOS
+        // ---------------------------------------------------------------------
 
         private void DesenhaElementos(Graphics g)
         {
             foreach (var el in jogo.Elementos)
             {
                 var r = new RectangleF((float)el.PosicaoX, (float)el.PosicaoY, el.Largura, el.Altura);
-                if (r.Bottom < -10 || r.Top > jogo.Config.Altura + 10) continue;
+                if (r.Bottom < -40 || r.Top > jogo.Config.Altura + 40) continue;
 
-                if (el.Tipo == TipoElemento.Moeda)
+                switch (el.Tipo)
                 {
-                    DesenhaMoeda(g, r, el.Animacao);
-                    continue;
-                }
+                    case TipoElemento.Lagrima:
+                        Marcador(g, r, Tema.Ciano, 0.55f);
+                        var pulso = 1 + (float)Math.Sin(el.Animacao / 220.0) * 0.08f;
+                        PixelArt.Desenhar(g, "lagrima", Escalar(r, pulso));
+                        break;
 
-                switch (el.Obstaculo)
-                {
-                    case TipoObstaculo.CarroLento: DesenhaCarroInimigo(g, r); break;
-                    case TipoObstaculo.Caminhao: DesenhaCaminhao(g, r); break;
-                    case TipoObstaculo.Cone: DesenhaCone(g, r); break;
-                    case TipoObstaculo.Buraco: DesenhaBuraco(g, r); break;
-                    case TipoObstaculo.Oleo: DesenhaOleo(g, r); break;
-                }
-            }
-        }
+                    case TipoElemento.PowerUp:
+                        Marcador(g, r, Tema.Dourado, 0.75f);
+                        PixelArt.Desenhar(g, SpriteDoPoder(el.PowerUp),
+                                          Escalar(r, 1 + (float)Math.Sin(el.Animacao / 260.0) * 0.07f));
+                        break;
 
-        private static void DesenhaSombra(Graphics g, RectangleF r)
-        {
-            using var sombra = new SolidBrush(Color.FromArgb(70, 0, 0, 0));
-            g.FillEllipse(sombra, r.X + 2, r.Bottom - r.Height * 0.22f, r.Width - 4, r.Height * 0.26f);
-        }
-
-        private void DesenhaCarroInimigo(Graphics g, RectangleF r)
-        {
-            DesenhaSombra(g, r);
-
-            if (imgObstaculo is not null)
-            {
-                g.DrawImage(imgObstaculo, r);
-            }
-            else
-            {
-                using var pincel = new SolidBrush(Color.FromArgb(215, 70, 70));
-                using var caminho = Arredondado(r, r.Width * 0.28f);
-                g.FillPath(pincel, caminho);
-            }
-        }
-
-        private void DesenhaCaminhao(Graphics g, RectangleF r)
-        {
-            var state = g.Save();
-
-            var centroX = r.X + r.Width / 2f;
-            var centroY = r.Y + r.Height / 2f;
-
-            g.TranslateTransform(centroX, centroY);
-            g.RotateTransform(180);
-            g.TranslateTransform(-centroX, -centroY);
-
-            DesenhaSombra(g, r);
-
-            var cabine = new RectangleF(r.X + r.Width * 0.08f, r.Bottom - r.Height * 0.26f,
-                                        r.Width * 0.84f, r.Height * 0.24f);
-            var bau = new RectangleF(r.X, r.Y, r.Width, r.Height * 0.72f);
-
-            using (var pincelBau = new LinearGradientBrush(bau,
-                       Color.FromArgb(238, 240, 245), Color.FromArgb(186, 192, 205), 0f))
-            using (var caminho = Arredondado(bau, r.Width * 0.12f))
-            {
-                g.FillPath(pincelBau, caminho);
-            }
-
-            using (var linhas = new Pen(Color.FromArgb(120, 90, 96, 110), 2))
-            {
-                for (int i = 1; i <= 3; i++)
-                {
-                    var y = bau.Y + bau.Height * i / 4f;
-                    g.DrawLine(linhas, bau.X + 4, y, bau.Right - 4, y);
+                    case TipoElemento.Obstaculo:
+                        DesenhaObstaculo(g, el, r);
+                        break;
                 }
             }
-
-            using (var pincelCabine = new SolidBrush(Color.FromArgb(48, 92, 168)))
-            using (var caminho = Arredondado(cabine, r.Width * 0.16f))
-            {
-                g.FillPath(pincelCabine, caminho);
-            }
-
-            using var luz = new SolidBrush(Color.FromArgb(230, 240, 70, 60));
-            g.FillEllipse(luz, cabine.X + 3, cabine.Bottom - 8, 8, 6);
-            g.FillEllipse(luz, cabine.Right - 11, cabine.Bottom - 8, 8, 6);
-
-            g.Restore(state);
         }
 
-        private static void DesenhaCone(Graphics g, RectangleF r)
+        private void DesenhaObstaculo(Graphics g, Elemento el, RectangleF r)
         {
-            DesenhaSombra(g, r);
+            // a miragem nao machuca: marcador ciano em vez de vermelho
+            var perigoso = el.Obstaculo != TipoObstaculo.Miragem;
+            Marcador(g, r, perigoso ? Tema.Rosa : Tema.Ciano, perigoso ? 0.6f : 0.4f);
 
-            var pontos = new PointF[]
+            var sprite = el.Obstaculo switch
             {
-                new(r.X + r.Width / 2, r.Y),
-                new(r.Right, r.Bottom - r.Height * 0.16f),
-                new(r.X, r.Bottom - r.Height * 0.16f)
+                TipoObstaculo.Vulto => jogo.FaseAtual.SpriteVulto,
+                TipoObstaculo.Executor => "pesado",
+                TipoObstaculo.Drone => "drone",
+                TipoObstaculo.Barreira => "barreira",
+                _ => "miragem"
             };
 
-            using (var laranja = new SolidBrush(Color.FromArgb(240, 118, 32)))
+            var caixa = r;
+            if (el.Obstaculo == TipoObstaculo.Drone)
             {
-                g.FillPolygon(laranja, pontos);
+                var flutuar = (float)Math.Sin(el.Animacao / 120.0) * r.Height * 0.08f;
+                caixa = new RectangleF(r.X, r.Y + flutuar, r.Width, r.Height);
             }
 
-            using (var faixa = new Pen(Color.FromArgb(250, 250, 250), Math.Max(2f, r.Height * 0.16f)))
-            {
-                var y = r.Y + r.Height * 0.52f;
-                g.DrawLine(faixa, r.X + r.Width * 0.22f, y, r.Right - r.Width * 0.22f, y);
-            }
-
-            using var baseCone = new SolidBrush(Color.FromArgb(210, 88, 20));
-            g.FillRectangle(baseCone, r.X, r.Bottom - r.Height * 0.18f, r.Width, r.Height * 0.18f);
+            PixelArt.Desenhar(g, sprite, caixa);
         }
 
-        private static void DesenhaBuraco(Graphics g, RectangleF r)
+        /// <summary>
+        /// Mancha de luz no chao embaixo do elemento. E o aviso mais rapido de todos:
+        /// rosa = perigo, ciano = pode pegar, dourado = poder.
+        /// </summary>
+        private static void Marcador(Graphics g, RectangleF r, Color cor, float forca)
         {
-            using (var contorno = new SolidBrush(Color.FromArgb(120, 30, 30, 34)))
-            {
-                g.FillEllipse(contorno, r);
-            }
+            var largura = r.Width * 1.15f;
+            var altura = r.Height * 0.3f;
+            var caixa = new RectangleF(r.X + (r.Width - largura) / 2, r.Bottom - altura * 0.75f, largura, altura);
 
-            var interno = new RectangleF(r.X + r.Width * 0.09f, r.Y + r.Height * 0.14f,
-                                         r.Width * 0.82f, r.Height * 0.72f);
-            using (var buraco = new SolidBrush(Color.FromArgb(245, 16, 16, 20)))
+            using (var sombra = new SolidBrush(Tema.ComAlfa(cor, (int)(70 * forca))))
             {
-                g.FillEllipse(buraco, interno);
+                g.FillEllipse(sombra, caixa);
             }
-
-            using var pedras = new Pen(Color.FromArgb(150, 120, 120, 128), 2);
-            g.DrawEllipse(pedras, r);
+            using var borda = new Pen(Tema.ComAlfa(cor, (int)(150 * forca)), 2);
+            g.DrawEllipse(borda, caixa);
         }
 
-        private static void DesenhaOleo(Graphics g, RectangleF r)
+        private static RectangleF Escalar(RectangleF r, float fator)
+            => new(r.X - r.Width * (fator - 1) / 2, r.Y - r.Height * (fator - 1) / 2,
+                   r.Width * fator, r.Height * fator);
+
+        private static string SpriteDoPoder(TipoPowerUp poder) => poder switch
         {
-            using (var oleo = new SolidBrush(Color.FromArgb(215, 22, 20, 30)))
-            {
-                g.FillEllipse(oleo, r);
-            }
+            TipoPowerUp.Empatia => "empatia",
+            TipoPowerUp.Proposito => "proposito",
+            TipoPowerUp.Conexao => "conexao",
+            _ => "visao"
+        };
 
-            using (var respingo = new SolidBrush(Color.FromArgb(180, 22, 20, 30)))
-            {
-                g.FillEllipse(respingo, r.X - r.Width * 0.12f, r.Y + r.Height * 0.45f,
-                              r.Width * 0.4f, r.Height * 0.4f);
-                g.FillEllipse(respingo, r.Right - r.Width * 0.3f, r.Y - r.Height * 0.18f,
-                              r.Width * 0.36f, r.Height * 0.36f);
-            }
+        // ---------------------------------------------------------------------
+        // SELENE E CHEFE
+        // ---------------------------------------------------------------------
 
-            using var brilho = new SolidBrush(Color.FromArgb(90, 120, 90, 200));
-            g.FillEllipse(brilho, r.X + r.Width * 0.22f, r.Y + r.Height * 0.2f,
-                          r.Width * 0.34f, r.Height * 0.3f);
-        }
-
-        private void DesenhaMoeda(Graphics g, RectangleF r, double animacao)
-        {
-            // "giro" da moeda: a largura vai e volta
-            var giro = (float)Math.Abs(Math.Cos(animacao / 260.0));
-            var largura = Math.Max(3f, r.Width * giro);
-            var face = new RectangleF(r.X + (r.Width - largura) / 2, r.Y, largura, r.Height);
-
-            if (jogo.FaseAtual.Noite)
-            {
-                using var brilho = new SolidBrush(Color.FromArgb(60, 255, 226, 120));
-                g.FillEllipse(brilho, r.X - r.Width * 0.35f, r.Y - r.Height * 0.35f,
-                              r.Width * 1.7f, r.Height * 1.7f);
-            }
-
-            using (var ouro = new LinearGradientBrush(
-                       new RectangleF(face.X, face.Y, Math.Max(1f, face.Width), Math.Max(1f, face.Height)),
-                       Color.FromArgb(255, 226, 120), Color.FromArgb(214, 152, 24), 60f))
-            {
-                g.FillEllipse(ouro, face);
-            }
-
-            using (var aro = new Pen(Color.FromArgb(150, 110, 20), 2))
-            {
-                g.DrawEllipse(aro, face);
-            }
-
-            if (giro > 0.55f)
-            {
-                using var formato = new StringFormat
-                {
-                    Alignment = StringAlignment.Center,
-                    LineAlignment = StringAlignment.Center
-                };
-                using var texto = new SolidBrush(Color.FromArgb(150, 110, 20));
-                g.DrawString("$", fonteMini, texto, face, formato);
-            }
-        }
-
-        private void DesenhaCarroDoJogador(Graphics g)
+        private void DesenhaJogador(Graphics g)
         {
             var cfg = jogo.Config;
-            var carro = jogo.Carro;
+            var jogador = jogo.Jogador;
 
             if (jogo.Invencivel && jogo.Estado == EstadoJogo.Jogando
                 && (int)(jogo.TempoInvencivelMs / 110) % 2 == 0)
@@ -529,62 +668,73 @@ namespace JogoCorridaWinFormsApp
                 return;
             }
 
-            var r = new RectangleF((float)carro.PosicaoX, (float)carro.PosicaoY, carro.Largura, carro.Altura);
+            var r = new RectangleF((float)jogador.PosicaoX, (float)jogador.PosicaoY, jogador.Largura, jogador.Altura);
             var alvo = jogo.PosicionaObjeto(jogo.FaixaAlvo);
-            var inclinacao = (float)Math.Clamp((alvo - carro.PosicaoX) / cfg.LarguraFaixa * 16, -14, 14);
+            var inclinacao = (float)Math.Clamp((alvo - jogador.PosicaoX) / cfg.LarguraFaixa * 16, -12, 12);
 
-            var estadoGraficos = g.Save();
-            g.TranslateTransform(r.X + r.Width / 2, r.Y + r.Height / 2);
-            g.RotateTransform(inclinacao);
-            g.TranslateTransform(-(r.X + r.Width / 2), -(r.Y + r.Height / 2));
-
-            DesenhaSombra(g, r);
-
-            if (imgCarro is not null)
+            // rastro de luz atras
+            using (var rastro = new LinearGradientBrush(
+                       new RectangleF(r.X, r.Bottom - 4, Math.Max(1, r.Width), Math.Max(1, cfg.Altura - r.Bottom + 8)),
+                       Tema.ComAlfa(Tema.Ciano, 110), Tema.ComAlfa(Tema.Ciano, 0),
+                       LinearGradientMode.Vertical))
             {
-                g.DrawImage(imgCarro, r);
-            }
-            else
-            {
-                using var pincel = new SolidBrush(Color.FromArgb(60, 140, 230));
-                using var caminho = Arredondado(r, r.Width * 0.28f);
-                g.FillPath(pincel, caminho);
+                g.FillRectangle(rastro, r.X + r.Width * 0.25f, r.Bottom - 4,
+                                r.Width * 0.5f, cfg.Altura - r.Bottom + 8);
             }
 
-            g.Restore(estadoGraficos);
+            if (jogo.TurboAtivo) DesenhaLinhasDeVelocidade(g, r);
 
-            if (jogo.Derrapando)
+            Marcador(g, r, Tema.Ciano, 1f);
+            PixelArt.Desenhar(g, "selene", r, inclinacao);
+
+            if (jogo.TemEscudo) DesenhaEscudo(g, r);
+            if (jogo.ImaAtivo) DesenhaCampoDoIma(g, r);
+        }
+
+        private void DesenhaLinhasDeVelocidade(Graphics g, RectangleF r)
+        {
+            using var caneta = new Pen(Tema.ComAlfa(Tema.Dourado, 130), 2);
+            for (int i = 0; i < 6; i++)
             {
-                using var fumaca = new SolidBrush(Color.FromArgb(90, 235, 235, 235));
-                g.FillEllipse(fumaca, r.X - 6, r.Bottom - 10, r.Width + 12, 20);
+                var x = r.X - r.Width * 0.4f + (float)rnd.NextDouble() * r.Width * 1.8f;
+                var y = r.Bottom + (float)rnd.NextDouble() * 60;
+                g.DrawLine(caneta, x, y, x, y + 18);
             }
         }
 
-        private void DesenhaNoite(Graphics g)
+        private void DesenhaEscudo(Graphics g, RectangleF r)
         {
-            var cfg = jogo.Config;
+            var caixa = RectangleF.Inflate(r, r.Width * 0.3f, r.Height * 0.2f);
+            var pulso = (int)(90 + Math.Sin(relogio.Elapsed.TotalMilliseconds / 160.0) * 50);
 
-            using (var escuro = new SolidBrush(Color.FromArgb(130, 6, 8, 22)))
-            {
-                g.FillRectangle(escuro, -40, -40, cfg.Largura + 80, cfg.Altura + 80);
-            }
+            using var caneta = new Pen(Tema.ComAlfa(Tema.Dourado, pulso), 3);
+            g.DrawEllipse(caneta, caixa);
+            using var preenchimento = new SolidBrush(Tema.ComAlfa(Tema.Dourado, 26));
+            g.FillEllipse(preenchimento, caixa);
+        }
 
-            var carro = jogo.Carro;
-            var topo = (float)carro.PosicaoY + 6;
-            var alcance = cfg.Altura * 0.55f;
+        private void DesenhaCampoDoIma(Graphics g, RectangleF r)
+        {
+            var raio = (float)(jogo.Config.Altura * 0.45);
+            var centroX = r.X + r.Width / 2;
+            var centroY = r.Y + r.Height / 2;
+            var pulso = (float)(Math.Sin(relogio.Elapsed.TotalMilliseconds / 260.0) * 0.06 + 1);
 
-            var farol = new PointF[]
-            {
-                new((float)carro.PosicaoX + 4, topo),
-                new((float)carro.PosicaoX + carro.Largura - 4, topo),
-                new((float)carro.CentroX + carro.Largura * 1.7f, topo - alcance),
-                new((float)carro.CentroX - carro.Largura * 1.7f, topo - alcance)
-            };
+            using var caneta = new Pen(Tema.ComAlfa(Tema.Dourado, 45), 2);
+            g.DrawEllipse(caneta, centroX - raio * pulso, centroY - raio * pulso,
+                          raio * 2 * pulso, raio * 2 * pulso);
+        }
 
-            using var luz = new LinearGradientBrush(
-                new PointF(0, topo), new PointF(0, topo - alcance),
-                Color.FromArgb(85, 255, 246, 200), Color.FromArgb(0, 255, 246, 200));
-            g.FillPolygon(luz, farol);
+        private void DesenhaChefe(Graphics g)
+        {
+            var chefe = jogo.Chefe;
+            if (chefe is null) return;
+
+            var r = new RectangleF((float)chefe.PosicaoX, (float)chefe.PosicaoY, chefe.Largura, chefe.Altura);
+            var pulso = (float)(Math.Sin(chefe.Animacao / 320.0) * 0.04 + 1);
+
+            Tema.Halo(g, Tema.Rosa, r.X + r.Width / 2, r.Y + r.Height / 2, r.Width * 0.9f, 110);
+            PixelArt.Desenhar(g, jogo.FaseAtual.SpriteChefe, Escalar(r, pulso));
         }
 
         private void DesenhaClaraoDaBatida(Graphics g)
@@ -592,110 +742,145 @@ namespace JogoCorridaWinFormsApp
             var intensidade = jogo.IntensidadeExplosao;
             if (intensidade <= 0) return;
 
-            var cfg = jogo.Config;
-            var alfa = (int)(200 * Math.Pow(intensidade, 3));
+            var alfa = (int)(210 * Math.Pow(intensidade, 3));
             if (alfa <= 0) return;
 
-            using var clarao = new SolidBrush(Color.FromArgb(alfa, 255, 232, 180));
-            g.FillRectangle(clarao, -40, -40, cfg.Largura + 80, cfg.Altura + 80);
+            using var clarao = new SolidBrush(Color.FromArgb(alfa, 255, 110, 170));
+            g.FillRectangle(clarao, -40, -40, jogo.Config.Largura + 80, jogo.Config.Altura + 80);
         }
+
+        // =====================================================================
+        // PAINEL (HUD)
+        // =====================================================================
 
         private void DesenhaPainel(Graphics g)
         {
             var cfg = jogo.Config;
             var largura = cfg.Largura;
+            var meio = largura / 2f;
+            var fase = jogo.FaseAtual;
+            var neon = Tema.De(fase.CorNeon);
 
-            using (var fundo = new SolidBrush(Color.FromArgb(175, 10, 12, 20)))
+            using (var fundo = new SolidBrush(Color.FromArgb(238, 5, 5, 10)))
             {
                 g.FillRectangle(fundo, 0, 0, largura, AlturaPainel);
             }
+            Tema.LinhaNeon(g, neon, 0, AlturaPainel, largura, AlturaPainel, 1.5f, 0.8f);
 
-            Texto(g, "PONTOS", fonteMini, Color.FromArgb(170, 200, 210, 230), 14, 7, StringAlignment.Near);
-            Texto(g, jogo.Pontuacao.ToString("N0"), fonteGrande, Color.White, 12, 18, StringAlignment.Near);
+            Tema.Texto(g, "[ PONTOS ]", fonteMini, Tema.ComAlfa(Tema.Cinza, 220), 14, 5, StringAlignment.Near);
+            Tema.Texto(g, "RECORDE", fonteMini, Tema.ComAlfa(Tema.Cinza, 220), meio, 5, StringAlignment.Center);
 
-            Texto(g, "RECORDE", fonteMini, Color.FromArgb(170, 200, 210, 230),
-                  largura / 2f + 10, 7, StringAlignment.Center);
-            Texto(g, jogo.MelhorPontuacao.ToString("N0"), fontePequena, Color.FromArgb(255, 214, 90),
-                  largura / 2f + 10, 22, StringAlignment.Center);
+            Tema.TextoGlitch(g, jogo.Pontuacao.ToString("N0"), fonteGrande, Tema.Branco,
+                             12, 17, StringAlignment.Near, 1.5f);
+            Tema.Texto(g, jogo.MelhorPontuacao.ToString("N0"), fonteHud, Tema.ComAlfa(Tema.Branco, 220),
+                       meio, 19, StringAlignment.Center);
 
+            // vidas: uma Selene para cada tentativa que ainda resta
             var x = largura - 16f;
-            for (int i = 0; i < jogo.Config.VidasMaximas; i++)
+            for (int i = 0; i < jogo.Vidas; i++)
             {
-                if (i >= jogo.Vidas) continue;
-                DesenhaCoracao(g, x - 18, 10, 18);
-                x -= 24;
+                PixelArt.Desenhar(g, "selene", new RectangleF(x - 15, 4, 14, 16));
+                x -= 18;
             }
 
-            var fase = jogo.FaseAtual;
-            Texto(g, $"FASE {jogo.NumeroFase}/{jogo.Fases.Count}  {fase.Nome}", fonteMini,
-                  Color.FromArgb(225, 235, 245), 14, 50, StringAlignment.Near);
+            // lagrimas coletadas (icone diferente do das vidas, para nao confundir)
+            PixelArt.Desenhar(g, "lagrima", new RectangleF(largura - 58, 24, 13, 14));
+            Tema.Texto(g, $"x{jogo.Lagrimas}", fonteMini, Tema.Ciano, largura - 14, 26, StringAlignment.Far);
 
-            var tempo = TimeSpan.FromMilliseconds(jogo.TempoJogoMs);
-            Texto(g, $"TEMPO {tempo:mm\\:ss}", fonteMini, Color.FromArgb(190, 200, 215, 235),
-                  largura - 14, 50, StringAlignment.Far);
+            // setor e ciclo
+            Tema.Texto(g, $"SETOR {jogo.NumeroSetor}/3  {fase.Nome}", fonteMini,
+                       Tema.ComAlfa(Tema.Branco, 235), 14, 52, StringAlignment.Near);
+            Tema.Texto(g, $"CICLO {jogo.Ciclo}", fonteMini,
+                       jogo.Ciclo > 1 ? Tema.Rosa : Tema.ComAlfa(Tema.Cinza, 235),
+                       largura - 14, 52, StringAlignment.Far);
 
-            using (var ouro = new SolidBrush(Color.FromArgb(255, 214, 90)))
+            DesenhaPoderesAtivos(g, meio, 46);
+
+            if (jogo.Multiplicador > 1)
             {
-                g.FillEllipse(ouro, largura / 2f + 26, 50, 12, 12);
+                Tema.Texto(g, "PONTOS x2", fonteMini, Tema.Dourado, 14, 68, StringAlignment.Near);
             }
-            Texto(g, $"x {jogo.Moedas}", fonteMini, Color.FromArgb(255, 214, 90),
-                  largura / 2f + 42, 50, StringAlignment.Near);
-
-            var y = AlturaPainel - 7;
-            using (var trilho = new SolidBrush(Color.FromArgb(120, 255, 255, 255)))
+            else if (Demo.Ativo)
             {
-                g.FillRectangle(trilho, 0, y, largura, 5);
+                Tema.Texto(g, "DEMO (F2)", fonteMini, Tema.ComAlfa(Tema.Verde, 220), 14, 68, StringAlignment.Near);
             }
-            using (var preenchido = new SolidBrush(Cor(fase.CorFaixa)))
+
+            if (jogo.ControlesInvertidos)
             {
-                g.FillRectangle(preenchido, 0, y, (float)(largura * jogo.ProgressoFase), 5);
+                Tema.Texto(g, "CONTROLES INVERTIDOS", fonteMini, Tema.Ciano, largura - 14, 68, StringAlignment.Far);
+            }
+
+            var y = AlturaPainel - 6;
+            if (jogo.ChefeAtivo)
+            {
+                Tema.Texto(g, $"!! {fase.NomeChefe} !!", fonteMini, Tema.Rosa, meio, 68, StringAlignment.Center);
+
+                using (var trilho = new SolidBrush(Color.FromArgb(90, 60, 10, 25)))
+                {
+                    g.FillRectangle(trilho, 0, y, largura, 5);
+                }
+                Tema.BarraNeon(g, Tema.Rosa,
+                               new RectangleF(0, y, (float)(largura * jogo.EnergiaChefe / 100.0), 5), 1.2f);
+            }
+            else
+            {
+                using (var trilho = new SolidBrush(Color.FromArgb(70, 255, 255, 255)))
+                {
+                    g.FillRectangle(trilho, 0, y, largura, 5);
+                }
+                Tema.BarraNeon(g, neon, new RectangleF(0, y, (float)(largura * jogo.ProgressoSetor), 5), 0.9f);
             }
         }
 
-        private static void DesenhaCoracao(Graphics g, float x, float y, float tamanho)
+        private void DesenhaPoderesAtivos(Graphics g, float centroX, float y)
         {
-            using var caminho = new GraphicsPath();
-            var metade = tamanho / 2;
+            var ativos = new List<TipoPowerUp>();
+            if (jogo.TemEscudo) ativos.Add(TipoPowerUp.Empatia);
+            foreach (var poder in Enum.GetValues<TipoPowerUp>())
+            {
+                if (poder != TipoPowerUp.Empatia && jogo.TempoDoPoder(poder) > 0) ativos.Add(poder);
+            }
+            if (ativos.Count == 0) return;
 
-            caminho.AddArc(x, y, metade, metade, 180, 180);
-            caminho.AddArc(x + metade, y, metade, metade, 180, 180);
-            caminho.AddLine(x + tamanho, y + metade * 0.6f, x + metade, y + tamanho);
-            caminho.AddLine(x + metade, y + tamanho, x, y + metade * 0.6f);
-            caminho.CloseFigure();
+            var x = centroX - ativos.Count * 13;
+            foreach (var poder in ativos)
+            {
+                PixelArt.Desenhar(g, SpriteDoPoder(poder), new RectangleF(x, y, 18, 18));
 
-            using var pincel = new SolidBrush(Color.FromArgb(235, 72, 88));
-            using var contorno = new Pen(Color.FromArgb(120, 0, 0, 0), 1.5f);
-            g.FillPath(pincel, caminho);
-            g.DrawPath(contorno, caminho);
+                var tempo = jogo.TempoDoPoder(poder);
+                if (tempo > 0)
+                {
+                    Tema.Texto(g, $"{tempo / 1000:F0}", fonteMini, Tema.ComAlfa(Tema.Dourado, 230),
+                               x + 9, y + 17, StringAlignment.Center);
+                }
+                x += 26;
+            }
         }
+
+        // =====================================================================
+        // TELAS
+        // =====================================================================
 
         private void DesenhaAvisos(Graphics g)
         {
+            // as telas de ranking ficam por cima de tudo
+            if (telaExtra == TelaExtra.DigitandoNome) { DesenhaDigitacaoDoNome(g); return; }
+            if (telaExtra == TelaExtra.Ranking) { DesenhaRanking(g); return; }
+
             switch (jogo.Estado)
             {
-                case EstadoJogo.Menu:
-                    DesenhaMenu(g);
-                    break;
+                case EstadoJogo.Menu: DesenhaMenu(g); break;
+                case EstadoJogo.Dialogo: DesenhaDialogo(g); break;
+                case EstadoJogo.TrocandoSetor: DesenhaTrocaDeSetor(g); break;
+                case EstadoJogo.GameOver: DesenhaFimDeJogo(g); break;
 
                 case EstadoJogo.Pausado:
-                    DesenhaCaixa(g, "PAUSA", Color.White,
+                    DesenhaCaixa(g, "PAUSA", Tema.Branco,
                     [
                         "ENTER  continuar",
                         "ESC  sair do jogo",
                         Sons.Ligado ? "M  desligar o som" : "M  ligar o som"
                     ]);
-                    break;
-
-                case EstadoJogo.TrocandoFase:
-                    DesenhaTrocaDeFase(g);
-                    break;
-
-                case EstadoJogo.GameOver:
-                    DesenhaFimDeJogo(g, "GAME OVER", Color.FromArgb(255, 96, 86));
-                    break;
-
-                case EstadoJogo.Vitoria:
-                    DesenhaFimDeJogo(g, "VOCÊ VENCEU!", Color.FromArgb(126, 232, 148));
                     break;
             }
         }
@@ -703,232 +888,355 @@ namespace JogoCorridaWinFormsApp
         private void DesenhaMenu(Graphics g)
         {
             var cfg = jogo.Config;
-            EscureceTela(g, 175);
+            EscureceTela(g, 190);
 
-            var y = AlturaPainel + 14;
+            var y = AlturaPainel + 16;
 
-            if (imgLogo is not null)
-            {
-                var altura = cfg.Altura * 0.10f;
-                var largura = altura * imgLogo.Width / imgLogo.Height;
-                g.DrawImage(imgLogo, cfg.Largura / 2f - largura / 2, y, largura, altura);
-                y += altura + 14;
-            }
+            Tema.TextoGlitch(g, "POST HUMAN", fonteTitulo, Tema.Branco, cfg.Largura / 2f, y, StringAlignment.Center, 3f);
+            y += cfg.Altura * 0.072f;
+            Tema.TextoGlitch(g, "RUN", fonteTitulo, Tema.Rosa, cfg.Largura / 2f, y, StringAlignment.Center, 3f);
+            y += cfg.Altura * 0.08f;
 
-            Texto(g, "JOGO CORRIDA", fonteTitulo, Color.White, cfg.Largura / 2f, y, StringAlignment.Center);
-            Texto(g, "IFSP", fontePequena, Color.FromArgb(255, 214, 90),
-                  cfg.Largura / 2f, y + 46, StringAlignment.Center);
+            Tema.Texto(g, "voce e SELENE (NYX-01).", fonteMini, Tema.ComAlfa(Tema.Branco, 235),
+                       cfg.Largura / 2f, y, StringAlignment.Center);
+            y += 18;
+            Tema.Texto(g, "corra da Nex Gen e encontre Sof.", fonteMini, Tema.ComAlfa(Tema.Branco, 235),
+                       cfg.Largura / 2f, y, StringAlignment.Center);
 
-            string[] instrucoes =
-            [
-                "SETAS  ou  A / D     trocar de faixa",
-                "ENTER  ou  ESPAÇO    começar",
-                "P  pausar        M  som        ESC  sair",
-                "",
-                "Desvie dos obstáculos, pegue as moedas",
-                $"e sobreviva às {jogo.Fases.Count} fases!"
-            ];
+            y += 30;
+            DesenhaLegenda(g, y);
 
-            var linha = y + 100;
-            foreach (var texto in instrucoes)
-            {
-                Texto(g, texto, fontePequena, Color.FromArgb(230, 235, 245),
-                      cfg.Largura / 2f, linha, StringAlignment.Center);
-                linha += 26;
-            }
-
-            DesenhaLegendaDosItens(g, linha + 10);
-
-            var piscando = (int)(relogio.Elapsed.TotalMilliseconds / 500) % 2 == 0;
+            var piscando = (int)(relogio.Elapsed.TotalMilliseconds / 450) % 2 == 0;
             if (piscando)
             {
-                Texto(g, "PRESSIONE ENTER PARA COMEÇAR", fonteMedia, Color.FromArgb(255, 214, 90),
-                      cfg.Largura / 2f, cfg.Altura * 0.86f, StringAlignment.Center);
+                Tema.TextoGlitch(g, "> ENTER PARA CORRER <", fonteMedia, Tema.Ciano,
+                                 cfg.Largura / 2f, cfg.Altura * 0.80f, StringAlignment.Center);
             }
 
-            if (jogo.MelhorPontuacao > 0)
+            Tema.Texto(g, "SETAS mudar de faixa   P pausa   M som   R ranking   F2 demo", fonteMini,
+                       Tema.ComAlfa(Tema.Cinza, 235), cfg.Largura / 2f, cfg.Altura * 0.86f, StringAlignment.Center);
+
+            // os tres primeiros do ranking, direto no menu
+            var melhores = Ranking.Colocacoes.Take(3).ToList();
+            var linha = cfg.Altura * 0.905f;
+            for (int i = 0; i < melhores.Count; i++)
             {
-                Texto(g, $"Recorde: {jogo.MelhorPontuacao:N0}", fontePequena, Color.White,
-                      cfg.Largura / 2f, cfg.Altura * 0.92f, StringAlignment.Center);
+                Tema.Texto(g, $"{i + 1}. {melhores[i].Nome}  {melhores[i].Pontos:N0}", fonteMini,
+                           i == 0 ? Tema.Dourado : Tema.ComAlfa(Tema.Branco, 215),
+                           cfg.Largura / 2f, linha, StringAlignment.Center);
+                linha += 17;
             }
         }
 
-        private void DesenhaLegendaDosItens(Graphics g, float y)
+        /// <summary>
+        /// A legenda do menu: mostra o desenho de cada coisa com o rotulo do que fazer.
+        /// Fundo vermelho = fuja; fundo ciano = pegue.
+        /// </summary>
+        private void DesenhaLegenda(Graphics g, float y)
         {
             var cfg = jogo.Config;
-            var tamanho = 26f;
-            var espaco = cfg.Largura / 7f;  
-            var x = espaco;
+            var tamanho = cfg.Largura * 0.085f;
 
-            var itens = new (TipoObstaculo Tipo, string Texto)[]
+            void Grupo(string titulo, Color cor, string[] sprites, string rotulo, float topo)
             {
-                (TipoObstaculo.CarroLento, "10"),
-                (TipoObstaculo.Caminhao, "20"),
-                (TipoObstaculo.Cone, "5"),
-                (TipoObstaculo.Buraco, "8"),
-                (TipoObstaculo.Oleo, "esc.")
-            };
+                var caixa = new RectangleF(cfg.Largura * 0.08f, topo,
+                                           cfg.Largura * 0.84f, tamanho * 1.9f);
 
-            foreach (var (tipo, texto) in itens)
-            {
-                var r = new RectangleF(x - tamanho / 2, y, tamanho, tamanho);
-                switch (tipo)
+                using (var fundo = new SolidBrush(Tema.ComAlfa(cor, 26)))
+                using (var caminho = Tema.Arredondado(caixa, 4))
                 {
-                    case TipoObstaculo.CarroLento: DesenhaCarroInimigo(g, r); break;
-                    case TipoObstaculo.Caminhao: DesenhaCaminhao(g, r); break;
-                    case TipoObstaculo.Cone: DesenhaCone(g, r); break;
-                    case TipoObstaculo.Buraco: DesenhaBuraco(g, r); break;
-                    case TipoObstaculo.Oleo: DesenhaOleo(g, r); break;
+                    g.FillPath(fundo, caminho);
                 }
-                Texto(g, texto, fonteMini, Color.FromArgb(225, 235, 245), x, y + tamanho + 4, StringAlignment.Center);
-                x += espaco;
+                using (var borda = new Pen(Tema.ComAlfa(cor, 150), 1.5f))
+                using (var caminho = Tema.Arredondado(caixa, 4))
+                {
+                    g.DrawPath(borda, caminho);
+                }
+
+                Tema.Texto(g, titulo, fonteMini, cor, caixa.X + 10, caixa.Y + 6, StringAlignment.Near);
+
+                var x = caixa.X + 12;
+                foreach (var sprite in sprites)
+                {
+                    var altura = tamanho * PixelArt.Proporcao(sprite);
+                    PixelArt.Desenhar(g, sprite, new RectangleF(x, caixa.Bottom - altura - 8, tamanho, altura));
+                    x += tamanho + 8;
+                }
+
+                Tema.Texto(g, rotulo, fonteMini, Tema.ComAlfa(Tema.Branco, 230),
+                           caixa.Right - 10, caixa.Bottom - 22, StringAlignment.Far);
             }
 
-            var moeda = new RectangleF(x - tamanho / 2, y, tamanho, tamanho);
-            DesenhaMoeda(g, moeda, 0);
-            Texto(g, $"+{jogo.Config.PontosPorMoeda}", fonteMini, Color.FromArgb(255, 214, 90),
-                  x, y + tamanho + 4, StringAlignment.Center);
+            Grupo("VOCE", Tema.Ciano, ["selene"], "Selene (NYX-01)", y);
+            Grupo("FUJA", Tema.Rosa, ["agente", "neosage", "angeldust", "pesado", "barreira"],
+                  "encostou, perdeu vida", y + tamanho * 2.1f);
+            Grupo("PEGUE", Tema.Dourado, ["lagrima", "empatia", "proposito", "conexao", "visao"],
+                  "lagrimas e Insights", y + tamanho * 4.2f);
         }
 
-        private void DesenhaTrocaDeFase(Graphics g)
+        /// <summary>Caixa de conversa com o retrato do personagem.</summary>
+        private void DesenhaDialogo(Graphics g)
+        {
+            var cfg = jogo.Config;
+            var fala = jogo.FalaAtual;
+            if (fala is null) return;
+
+            EscureceTela(g, 210);
+
+            var cor = Tema.De(fala.Cor);
+            var alturaCaixa = cfg.Altura * 0.30f;
+            var caixa = new RectangleF(cfg.Largura * 0.06f, cfg.Altura * 0.46f,
+                                       cfg.Largura * 0.88f, alturaCaixa);
+
+            using (var fundo = new SolidBrush(Color.FromArgb(242, 8, 7, 14)))
+            using (var caminho = Tema.Arredondado(caixa, 4))
+            {
+                g.FillPath(fundo, caminho);
+            }
+            Tema.LinhaNeon(g, cor, caixa.X, caixa.Y, caixa.Right, caixa.Y, 2f);
+            Tema.LinhaNeon(g, cor, caixa.X, caixa.Bottom, caixa.Right, caixa.Bottom, 2f);
+
+            // retrato
+            var ladoRetrato = alturaCaixa * 0.46f;
+            var retrato = new RectangleF(caixa.X + 14, caixa.Y + 16, ladoRetrato, ladoRetrato);
+            Tema.Halo(g, cor, retrato.X + retrato.Width / 2, retrato.Y + retrato.Height / 2,
+                      retrato.Width * 0.75f, 45);
+            PixelArt.Desenhar(g, fala.Retrato, retrato);
+
+            // nome
+            var textoX = retrato.Right + 16;
+            Tema.Texto(g, fala.Personagem, fonteMedia, cor, textoX, caixa.Y + 12, StringAlignment.Near);
+
+            // texto aparecendo letra por letra
+            var visiveis = (int)Math.Clamp(jogo.TempoFalaMs / 16.0, 0, fala.Texto.Length);
+            var texto = fala.Texto[..visiveis];
+            DesenhaTextoQuebrado(g, texto, fonteFala, Tema.Branco,
+                                 textoX, caixa.Y + 40, caixa.Right - textoX - 14);
+
+            // indicador de avancar
+            if ((int)(relogio.Elapsed.TotalMilliseconds / 400) % 2 == 0)
+            {
+                Tema.Texto(g, "ENTER >", fonteMini, Tema.ComAlfa(Tema.Branco, 200),
+                           caixa.Right - 14, caixa.Bottom - 24, StringAlignment.Far);
+            }
+
+            if (jogo.IndiceFala == 0)
+            {
+                Tema.Texto(g, "ESC pula", fonteMini, Tema.ComAlfa(Tema.Cinza, 190),
+                           (caixa.X + caixa.Right) / 2, caixa.Bottom - 24, StringAlignment.Center);
+            }
+
+            // quantas falas faltam
+            Tema.Texto(g, $"{jogo.IndiceFala + 1}/{jogo.DialogoAtual.Count}", fonteMini,
+                       Tema.ComAlfa(Tema.Cinza, 200), caixa.X + 14, caixa.Bottom - 24, StringAlignment.Near);
+        }
+
+        /// <summary>Escreve o texto quebrando as linhas na largura disponivel.</summary>
+        private static void DesenhaTextoQuebrado(Graphics g, string texto, Font fonte, Color cor,
+                                                 float x, float y, float largura)
+        {
+            var palavras = texto.Split(' ');
+            var linha = "";
+            var alturaLinha = fonte.Height + 2;
+
+            foreach (var palavra in palavras)
+            {
+                var teste = linha.Length == 0 ? palavra : linha + " " + palavra;
+                if (g.MeasureString(teste, fonte).Width > largura && linha.Length > 0)
+                {
+                    Tema.Texto(g, linha, fonte, cor, x, y, StringAlignment.Near);
+                    y += alturaLinha;
+                    linha = palavra;
+                }
+                else
+                {
+                    linha = teste;
+                }
+            }
+            if (linha.Length > 0) Tema.Texto(g, linha, fonte, cor, x, y, StringAlignment.Near);
+        }
+
+        private void DesenhaTrocaDeSetor(Graphics g)
         {
             var cfg = jogo.Config;
             var fase = jogo.FaseAtual;
 
             var restante = jogo.TempoEfeitoMs;
-            var total = cfg.DuracaoTrocaFaseMs;
-            var transparencia = Math.Clamp(Math.Min((total - restante) / 250.0, restante / 400.0), 0, 1);
+            var total = cfg.DuracaoTrocaSetorMs;
+            var visivel = Math.Clamp(Math.Min((total - restante) / 250.0, restante / 400.0), 0, 1);
 
-            EscureceTela(g, (int)(165 * transparencia));
+            EscureceTela(g, (int)(175 * visivel));
 
-            var cor = Color.FromArgb((int)(255 * transparencia), 255, 255, 255);
-            var destaque = Color.FromArgb((int)(255 * transparencia), 255, 214, 90);
+            var cor = Tema.ComAlfa(Tema.Branco, (int)(255 * visivel));
+            var destaque = Tema.ComAlfa(Tema.Ciano, (int)(255 * visivel));
 
-            Texto(g, $"FASE {jogo.NumeroFase}", fonteTitulo, destaque,
-                  cfg.Largura / 2f, cfg.Altura * 0.38f, StringAlignment.Center);
-            Texto(g, fase.Nome, fonteMedia, cor,
-                  cfg.Largura / 2f, cfg.Altura * 0.48f, StringAlignment.Center);
-            Texto(g, fase.Descricao, fontePequena, cor,
-                  cfg.Largura / 2f, cfg.Altura * 0.54f, StringAlignment.Center);
-            Texto(g, $"Objetivo: {fase.PontosParaConcluir:N0} pontos   •   +1 vida de bônus", fonteMini, cor,
-                  cfg.Largura / 2f, cfg.Altura * 0.60f, StringAlignment.Center);
+            Tema.TextoGlitch(g, $"CICLO {jogo.Ciclo}", fonteTitulo, destaque,
+                             cfg.Largura / 2f, cfg.Altura * 0.34f, StringAlignment.Center, 3f);
+            Tema.Texto(g, fase.Nome, fonteMedia, cor, cfg.Largura / 2f, cfg.Altura * 0.47f, StringAlignment.Center);
+            Tema.Texto(g, fase.Descricao, fonteMini, cor, cfg.Largura / 2f, cfg.Altura * 0.53f, StringAlignment.Center);
+
+            if (jogo.AvisoDeCiclo != "")
+            {
+                Tema.Texto(g, $"M8: {jogo.AvisoDeCiclo}", fonteMini,
+                           Tema.ComAlfa(Tema.Ciano, (int)(255 * visivel)),
+                           cfg.Largura / 2f, cfg.Altura * 0.60f, StringAlignment.Center);
+            }
         }
 
-        private void DesenhaFimDeJogo(Graphics g, string titulo, Color corTitulo)
+        private void DesenhaFimDeJogo(Graphics g)
         {
             var novoRecorde = jogo.Pontuacao >= jogo.MelhorPontuacao && jogo.Pontuacao > 0;
 
             string[] linhas =
             [
-                $"PONTUAÇÃO FINAL:  {jogo.Pontuacao:N0}",
+                $"PONTUACAO  {jogo.Pontuacao:N0}",
                 "",
-                $"Tempo:  {(int)jogo.PontosTempo:N0} pts",
-                $"Obstáculos superados:  {jogo.ObstaculosSuperados}  ({(int)jogo.PontosObstaculos:N0} pts)",
-                $"Moedas:  {jogo.Moedas}  ({(int)jogo.PontosMoedas:N0} pts)",
-                $"Fase alcançada:  {jogo.NumeroFase} de {jogo.Fases.Count}",
+                $"chegou ate   ciclo {jogo.Ciclo}, setor {jogo.NumeroSetor}",
+                $"tempo        {(int)jogo.PontosTempo:N0}",
+                $"obstaculos   {jogo.ObstaculosSuperados}  ({(int)jogo.PontosObstaculos:N0})",
+                $"lagrimas     {jogo.Lagrimas}  ({(int)jogo.PontosLagrimas:N0})",
+                $"Insights     {jogo.PowerUpsPegos}",
                 "",
-                novoRecorde ? "NOVO RECORDE!" : $"Recorde: {jogo.MelhorPontuacao:N0}",
+                novoRecorde ? "*** NOVO RECORDE ***" : $"recorde {jogo.MelhorPontuacao:N0}",
                 "",
-                "ENTER  jogar de novo        ESC  sair"
+                "ENTER  correr de novo    R  ranking    ESC  sair"
             ];
 
-            DesenhaCaixa(g, titulo, corTitulo, linhas);
+            DesenhaCaixa(g, "GAME OVER", Tema.Rosa, linhas);
         }
 
         private void DesenhaCaixa(Graphics g, string titulo, Color corTitulo, string[] linhas)
         {
             var cfg = jogo.Config;
-            EscureceTela(g, 185);
+            EscureceTela(g, 195);
 
-            var alturaCaixa = 110 + linhas.Length * 24;
+            var alturaCaixa = 118 + linhas.Length * 22;
             var caixa = new RectangleF(cfg.Largura * 0.06f,
                                        (cfg.Altura - alturaCaixa) / 2f,
                                        cfg.Largura * 0.88f,
                                        alturaCaixa);
 
-            using (var fundo = new SolidBrush(Color.FromArgb(225, 18, 20, 30)))
-            using (var borda = new Pen(Color.FromArgb(120, 255, 255, 255), 2))
-            using (var caminho = Arredondado(caixa, 18))
+            using (var fundo = new SolidBrush(Color.FromArgb(235, 8, 7, 14)))
+            using (var caminho = Tema.Arredondado(caixa, 4))
             {
                 g.FillPath(fundo, caminho);
-                g.DrawPath(borda, caminho);
             }
+            Tema.LinhaNeon(g, corTitulo, caixa.X, caixa.Y, caixa.Right, caixa.Y, 2f);
+            Tema.LinhaNeon(g, corTitulo, caixa.X, caixa.Bottom, caixa.Right, caixa.Bottom, 2f);
 
-            Texto(g, titulo, fonteTitulo, corTitulo, cfg.Largura / 2f, caixa.Y + 24, StringAlignment.Center);
+            Tema.TextoGlitch(g, titulo, fonteTitulo, corTitulo, cfg.Largura / 2f, caixa.Y + 20,
+                             StringAlignment.Center, 3f);
 
-            var y = caixa.Y + 92;
+            var y = caixa.Y + 100;
             foreach (var linha in linhas)
             {
-                var destaque = linha.StartsWith("PONTUAÇÃO") || linha == "NOVO RECORDE!";
-                Texto(g, linha, destaque ? fonteMedia : fontePequena,
-                      destaque ? Color.FromArgb(255, 214, 90) : Color.FromArgb(230, 235, 245),
-                      cfg.Largura / 2f, y, StringAlignment.Center);
-                y += 24;
+                var destaque = linha.StartsWith("PONTUACAO") || linha.StartsWith("***");
+                Tema.Texto(g, linha, destaque ? fonteMedia : fonteMini,
+                           destaque ? Tema.Ciano : Tema.ComAlfa(Tema.Branco, 230),
+                           cfg.Largura / 2f, y, StringAlignment.Center);
+                y += 22;
             }
+        }
+
+        /// <summary>Caixa para o jogador digitar o nome depois de entrar no ranking.</summary>
+        private void DesenhaDigitacaoDoNome(Graphics g)
+        {
+            var cfg = jogo.Config;
+            EscureceTela(g, 205);
+
+            var caixa = new RectangleF(cfg.Largura * 0.08f, cfg.Altura * 0.30f,
+                                       cfg.Largura * 0.84f, cfg.Altura * 0.34f);
+
+            using (var fundo = new SolidBrush(Color.FromArgb(240, 8, 7, 14)))
+            using (var caminho = Tema.Arredondado(caixa, 4))
+            {
+                g.FillPath(fundo, caminho);
+            }
+            Tema.LinhaNeon(g, Tema.Dourado, caixa.X, caixa.Y, caixa.Right, caixa.Y, 2f);
+            Tema.LinhaNeon(g, Tema.Dourado, caixa.X, caixa.Bottom, caixa.Right, caixa.Bottom, 2f);
+
+            var meio = cfg.Largura / 2f;
+            Tema.TextoGlitch(g, "ENTROU NO RANKING!", fonteMedia, Tema.Dourado, meio, caixa.Y + 20,
+                             StringAlignment.Center, 2f);
+            Tema.Texto(g, $"{jogo.Pontuacao:N0} pontos  -  ciclo {jogo.Ciclo}", fonteMini,
+                       Tema.ComAlfa(Tema.Branco, 235), meio, caixa.Y + 52, StringAlignment.Center);
+            Tema.Texto(g, "digite seu nome:", fonteMini, Tema.ComAlfa(Tema.Cinza, 235),
+                       meio, caixa.Y + 78, StringAlignment.Center);
+
+            // campo de texto
+            var campo = new RectangleF(caixa.X + 30, caixa.Y + 104, caixa.Width - 60, 40);
+            using (var fundoCampo = new SolidBrush(Color.FromArgb(200, 18, 16, 26)))
+            {
+                g.FillRectangle(fundoCampo, campo);
+            }
+            using (var borda = new Pen(Tema.ComAlfa(Tema.Ciano, 190), 2))
+            {
+                g.DrawRectangle(borda, campo.X, campo.Y, campo.Width, campo.Height);
+            }
+
+            var cursor = (int)(relogio.Elapsed.TotalMilliseconds / 450) % 2 == 0 ? "_" : " ";
+            Tema.Texto(g, nomeDigitado + cursor, fonteMedia, Tema.Branco,
+                       campo.X + campo.Width / 2, campo.Y + 8, StringAlignment.Center);
+
+            Tema.Texto(g, "ENTER confirma   BACKSPACE apaga", fonteMini,
+                       Tema.ComAlfa(Tema.Cinza, 235), meio, caixa.Bottom - 30, StringAlignment.Center);
+        }
+
+        /// <summary>Lista dos dez melhores, lida do arquivo ranking.csv.</summary>
+        private void DesenhaRanking(Graphics g)
+        {
+            var cfg = jogo.Config;
+            EscureceTela(g, 210);
+
+            var meio = cfg.Largura / 2f;
+            var colocacoes = Ranking.Colocacoes;
+
+            Tema.TextoGlitch(g, "RANKING", fonteTitulo, Tema.Dourado, meio, AlturaPainel + 18,
+                             StringAlignment.Center, 3f);
+
+            var y = AlturaPainel + 86;
+            var alturaLinha = Math.Min(30f, (cfg.Altura * 0.56f) / Math.Max(1, colocacoes.Count));
+
+            if (colocacoes.Count == 0)
+            {
+                Tema.Texto(g, "ninguem correu ainda.", fonteMini, Tema.ComAlfa(Tema.Branco, 220),
+                           meio, y, StringAlignment.Center);
+            }
+
+            for (int i = 0; i < colocacoes.Count; i++)
+            {
+                var c = colocacoes[i];
+                var novo = posicaoConquistada == i + 1;
+                var cor = novo ? Tema.Dourado
+                        : i == 0 ? Tema.Ciano
+                        : Tema.ComAlfa(Tema.Branco, 225);
+
+                if (novo)
+                {
+                    using var destaque = new SolidBrush(Tema.ComAlfa(Tema.Dourado, 30));
+                    g.FillRectangle(destaque, cfg.Largura * 0.06f, y - 3, cfg.Largura * 0.88f, alturaLinha);
+                }
+
+                Tema.Texto(g, $"{i + 1,2}", fonteHud, cor, cfg.Largura * 0.10f, y, StringAlignment.Near);
+                Tema.Texto(g, c.Nome, fonteHud, cor, cfg.Largura * 0.20f, y, StringAlignment.Near);
+                Tema.Texto(g, c.Pontos.ToString("N0"), fonteHud, cor, cfg.Largura * 0.76f, y, StringAlignment.Far);
+                Tema.Texto(g, $"c{c.Ciclo}", fonteMini, Tema.ComAlfa(Tema.Cinza, 220),
+                           cfg.Largura * 0.90f, y + 3, StringAlignment.Far);
+
+                y += alturaLinha;
+            }
+
+            Tema.Texto(g, "ENTER para voltar", fonteMini, Tema.Ciano, meio, cfg.Altura * 0.88f,
+                       StringAlignment.Center);
+            Tema.Texto(g, Ranking.Arquivo, fonteMini, Tema.ComAlfa(Tema.Cinza, 170),
+                       meio, cfg.Altura * 0.93f, StringAlignment.Center);
         }
 
         private void EscureceTela(Graphics g, int alfa)
         {
-            using var escuro = new SolidBrush(Color.FromArgb(Math.Clamp(alfa, 0, 255), 6, 8, 16));
+            using var escuro = new SolidBrush(Color.FromArgb(Math.Clamp(alfa, 0, 255), 4, 3, 8));
             g.FillRectangle(escuro, 0, 0, jogo.Config.Largura, jogo.Config.Altura);
         }
 
-        private static void Texto(Graphics g, string texto, Font fonte, Color cor,
-                                  float x, float y, StringAlignment alinhamento)
-        {
-            using var formato = new StringFormat { Alignment = alinhamento };
-            using var sombra = new SolidBrush(Color.FromArgb(140, 0, 0, 0));
-            using var pincel = new SolidBrush(cor);
-            g.DrawString(texto, fonte, sombra, x + 1.5f, y + 1.5f, formato);
-            g.DrawString(texto, fonte, pincel, x, y, formato);
-        }
-
-        private static Color Cor(uint argb) => Color.FromArgb(unchecked((int)argb));
-
-        private static GraphicsPath Arredondado(RectangleF r, float raio)
-        {
-            raio = Math.Max(1, Math.Min(raio, Math.Min(r.Width, r.Height) / 2));
-            var diametro = raio * 2;
-            var caminho = new GraphicsPath();
-
-            caminho.AddArc(r.X, r.Y, diametro, diametro, 180, 90);
-            caminho.AddArc(r.Right - diametro, r.Y, diametro, diametro, 270, 90);
-            caminho.AddArc(r.Right - diametro, r.Bottom - diametro, diametro, diametro, 0, 90);
-            caminho.AddArc(r.X, r.Bottom - diametro, diametro, diametro, 90, 90);
-            caminho.CloseFigure();
-
-            return caminho;
-        }
-
-        private static int CarregaRecorde()
-        {
-            try
-            {
-                if (File.Exists(ArquivoRecorde)
-                    && int.TryParse(File.ReadAllText(ArquivoRecorde).Trim(), out var valor))
-                {
-                    return valor;
-                }
-            }
-            catch
-            {
-            }
-            return 0;
-        }
-
-        private static void SalvaRecorde(int valor)
-        {
-            if (valor <= 0) return;
-
-            try
-            {
-                var pasta = Path.GetDirectoryName(ArquivoRecorde);
-                if (!string.IsNullOrEmpty(pasta)) Directory.CreateDirectory(pasta);
-                File.WriteAllText(ArquivoRecorde, valor.ToString());
-            }
-            catch
-            {
-            }
-        }
     }
 }

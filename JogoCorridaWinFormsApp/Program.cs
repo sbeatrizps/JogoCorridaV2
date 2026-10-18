@@ -1,3 +1,5 @@
+using System.IO;
+using System.Linq;
 namespace JogoCorridaWinFormsApp
 {
     internal static class Program
@@ -7,8 +9,10 @@ namespace JogoCorridaWinFormsApp
             "JogoCorrida", "erro.txt");
 
         [STAThread]
-        static void Main()
+        static void Main(string[] argumentos)
         {
+            Demo.Ativo = argumentos.Any(a => a.Equals("--demo", StringComparison.OrdinalIgnoreCase));
+
             ApplicationConfiguration.Initialize();
 
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);

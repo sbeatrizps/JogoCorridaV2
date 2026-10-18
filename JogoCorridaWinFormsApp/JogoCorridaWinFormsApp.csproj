@@ -5,11 +5,34 @@
     <TargetFramework>net10.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
+    <!-- usado so pelo System.Windows.Media.MediaPlayer, que toca a trilha em MP3 -->
+    <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <!-- o WPF traz namespaces que conflitam com o System.Drawing (Color, Brush, Point...),
+       entao eles ficam de fora dos usings automaticos -->
+  <ItemGroup>
+    <Using Remove="System.Windows" />
+    <Using Remove="System.Windows.Controls" />
+    <Using Remove="System.Windows.Data" />
+    <Using Remove="System.Windows.Documents" />
+    <Using Remove="System.Windows.Input" />
+    <Using Remove="System.Windows.Media" />
+    <Using Remove="System.Windows.Media.Imaging" />
+    <Using Remove="System.Windows.Navigation" />
+    <Using Remove="System.Windows.Shapes" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\JogoCorrida\JogoCorrida.csproj" />
+  </ItemGroup>
+
+  <!-- imagens dos personagens e trilha sonora (ver Assets\CREDITOS.txt) -->
+  <ItemGroup>
+    <Content Include="Assets\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>
